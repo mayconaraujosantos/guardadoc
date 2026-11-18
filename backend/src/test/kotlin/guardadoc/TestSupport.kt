@@ -8,6 +8,7 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import guardadoc.adapters.email.DevOutboxEmailSender
 import guardadoc.adapters.persistence.Database
 import guardadoc.adapters.storage.LocalFileSystemStorage
+import guardadoc.auth.EmailSender
 import guardadoc.documents.DocumentStorage
 import guardadoc.documents.MalwareScanner
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
@@ -69,6 +70,7 @@ class TestApp(
     val storageDir: Path = Files.createTempDirectory("guardadoc-test"),
     baseStorage: DocumentStorage? = null,
     scanner: MalwareScanner? = null,
+    emailOverride: EmailSender? = null,
 ) : AutoCloseable {
     val outbox = DevOutboxEmailSender()
     val storage = SpyStorage(baseStorage ?: LocalFileSystemStorage(storageDir))
@@ -83,7 +85,7 @@ class TestApp(
         ),
         database = database,
         clock = clock,
-        emailOverride = outbox,
+        emailOverride = emailOverride ?: outbox,
         storageOverride = storage,
         scannerOverride = scanner,
     )

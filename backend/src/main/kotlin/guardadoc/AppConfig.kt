@@ -70,13 +70,22 @@ data class AppConfig(
                 storageDir = Path.of(get("STORAGE_DIR") ?: "./data/storage"),
                 staticDir = Path.of(get("STATIC_DIR") ?: "../frontend/dist"),
                 smtp = get("SMTP_HOST")?.let { host ->
+                    val ssl = get("SMTP_SSL")?.toBooleanStrict() ?: (get("SMTP_PORT") == "465")
+                    val username = get("SMTP_USERNAME")
+                    val password = get("SMTP_PASSWORD")
+                    require((username == null) == (password == null)) {
+                        "SMTP_USERNAME e SMTP_PASSWORD devem ser definidos juntos"
+                    }
                     SmtpSettings(
                         host = host,
-                        port = get("SMTP_PORT")?.toInt() ?: 587,
-                        username = get("SMTP_USERNAME"),
-                        password = get("SMTP_PASSWORD"),
-                        from = get("SMTP_FROM") ?: error("SMTP_FROM é obrigatório quando SMTP_HOST é definido"),
-                        startTls = get("SMTP_STARTTLS")?.toBooleanStrict() ?: true,
+                        port = get("SMTP_PORT")?.toInt() ?: if (ssl) 465 else 587,
+                        username = username,
+                        password = password,
+                        // No Gmail, o remetente padrão é a própria conta.
+                        from = get("SMTP_FROM") ?: username
+                            ?: error("SMTP_FROM é obrigatório quando SMTP_HOST é definido"),
+                        startTls = !ssl && (get("SMTP_STARTTLS")?.toBooleanStrict() ?: true),
+                        ssl = ssl,
                     )
                 },
                 // Fora de dev, recusa HTTP puro (use proxy TLS com TRUST_PROXY=true).

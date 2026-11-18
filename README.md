@@ -86,10 +86,31 @@ make test             # testes do backend + E2E
 make test-e2e         # só E2E; filtre com E2E_ARGS="-g 'logout'"
 make test-e2e-headed  # E2E com navegador visível (ou test-e2e-ui para o modo interativo)
 make docker-up-full   # Docker com S3 local e ClamAV
+make email-test TO=voce@exemplo.com  # testa o envio SMTP configurado no .env
 make help             # lista todos os alvos
 ```
 
 Os comandos equivalentes, sem `make`, estão abaixo.
+
+### Envio de e-mails (Gmail)
+
+Sem `SMTP_HOST`, o modo dev não envia e-mails: os códigos ficam em
+`/dev/outbox`. Para receber os códigos de verdade pelo Gmail:
+
+1. Na conta Google, ative a verificação em duas etapas e crie uma
+   [senha de app](https://myaccount.google.com/apppasswords). A senha normal da
+   conta não funciona por SMTP.
+2. `cp .env.example .env` e preencha `SMTP_USERNAME`, `SMTP_PASSWORD` (entre
+   aspas; os espaços da senha de app são ignorados) e, se quiser, `SMTP_FROM`.
+   O `.env` é ignorado pelo git.
+3. `make email-test TO=voce@exemplo.com`. Em caso de falha, a mensagem diz a
+   causa: autenticação, conexão, TLS ou remetente recusado.
+4. `make dev` (ou `make docker-up`) passa a enviar os códigos por e-mail, e o
+   `/dev/outbox` fica desativado.
+
+Os testes E2E não leem o `.env` e continuam usando o outbox. O Gmail gratuito
+limita os envios a cerca de 500 por dia; em produção, prefira um serviço
+transacional (SES, Postmark, Mailgun...), configurado com as mesmas variáveis.
 
 ### Desenvolvimento (sem Docker)
 
@@ -157,7 +178,7 @@ vez, instale o navegador com `npx playwright install chromium`.
 | `RETENTION_DELETED_DOCUMENTS_DAYS` | `30` | retenção de metadados de documentos excluídos |
 | `RETENTION_AUDIT_DAYS` | `180` | retenção de eventos de auditoria |
 | `STATIC_DIR` | `../frontend/dist` | build do PWA |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS` | — | envio de e-mail real (obrigatório fora de dev) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS`, `SMTP_SSL` | — / `587` (`465` com SSL) | envio de e-mail real (obrigatório fora de dev). `SMTP_FROM` padrão = `SMTP_USERNAME`; `SMTP_SSL=true` para TLS implícito (porta 465) |
 
 ### API
 

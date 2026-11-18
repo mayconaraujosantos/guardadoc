@@ -50,8 +50,16 @@ class GuardaDocApp(
     private val log = LoggerFactory.getLogger(GuardaDocApp::class.java)
 
     val email: EmailSender = emailOverride
-        ?: config.smtp?.let(::SmtpEmailSender)
-        ?: if (config.dev) DevOutboxEmailSender() else error("Configure SMTP_HOST para envio de e-mails")
+        ?: config.smtp?.let {
+            log.info("E-mails de acesso via SMTP {}:{} (remetente {})", it.host, it.port, it.from)
+            SmtpEmailSender(it)
+        }
+        ?: if (config.dev) {
+            log.info("SMTP_HOST não definido: códigos de acesso ficam em /dev/outbox (nenhum e-mail é enviado)")
+            DevOutboxEmailSender()
+        } else {
+            error("Configure SMTP_HOST para envio de e-mails")
+        }
 
     val storage: DocumentStorage = storageOverride ?: when (config.storage) {
         AppConfig.StorageBackend.LOCAL -> LocalFileSystemStorage(config.storageDir)

@@ -11,12 +11,16 @@ NPM      := npm --prefix $(FRONTEND)
 COMPOSE  := docker compose
 COMPOSE_FULL := $(COMPOSE) -f docker-compose.yml -f docker-compose.full.yml
 
+# Carrega .env (se existir) só nos alvos que rodam a aplicação de dev.
+# Os testes E2E não o carregam: eles dependem do outbox de dev, não de SMTP.
+LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
+
 # Testes E2E: porta própria e banco embarcado descartável (não toca em backend/data/).
 E2E_PORT ?= 7071
 # Repassa filtros ao Playwright, ex.: make test-e2e E2E_ARGS="-g 'exclusão de conta'"
 E2E_ARGS ?=
 
-.PHONY: help install install-frontend install-e2e build build-frontend build-backend \
+.PHONY: help email-test install install-frontend install-e2e build build-frontend build-backend \
         dev dev-frontend test test-backend test-e2e test-e2e-headed test-e2e-ui e2e-report \
         ci docker-up docker-up-full docker-down docker-logs clean clean-dev-data
 
@@ -45,8 +49,13 @@ build-backend: ## Compila o backend e gera o pacote de distribuição
 
 # ------------------------------------------------------------------ execução
 
-dev: build-frontend ## Sobe API + PWA em http://localhost:7070 (PostgreSQL embarcado; OTPs em /dev/outbox)
-	$(GRADLE) runDev
+dev: build-frontend ## Sobe API + PWA em http://localhost:7070 (lê .env; sem SMTP, OTPs em /dev/outbox)
+	$(LOAD_ENV) $(GRADLE) runDev
+
+email-test: ## Envia um e-mail de teste com o SMTP do .env: make email-test TO=voce@exemplo.com
+	@[ -n "$(TO)" ] || { echo "Uso: make email-test TO=voce@exemplo.com"; exit 1; }
+	@[ -f .env ] || echo "Aviso: .env não encontrado (copie de .env.example); usando só o ambiente atual"
+	@$(LOAD_ENV) $(GRADLE) -q emailTest -Pto="$(TO)"
 
 dev-frontend: ## Vite com hot reload em http://localhost:5173 (rode `make dev` em outro terminal)
 	$(NPM) run dev

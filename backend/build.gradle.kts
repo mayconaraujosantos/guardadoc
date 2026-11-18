@@ -52,6 +52,8 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("io.zonky.test:embedded-postgres:2.2.2")
     testImplementation(platform("io.zonky.test.postgres:embedded-postgres-binaries-bom:17.11.0"))
+    // Servidor SMTP em memória para testar o envio de e-mails.
+    testImplementation("com.icegreen:greenmail:2.1.3")
     // Servidor S3 em memória para testar o adaptador S3 sem Docker.
     testImplementation("org.gaul:s3proxy:4.2.0")
 }
@@ -62,6 +64,16 @@ application {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+// ./gradlew emailTest -Pto=voce@exemplo.com → envia um e-mail de teste com as variáveis SMTP_*.
+tasks.register<JavaExec>("emailTest") {
+    group = "application"
+    description = "Envia um e-mail de teste usando a configuração SMTP_* do ambiente."
+    classpath = dev.runtimeClasspath
+    mainClass.set("guardadoc.EmailTestKt")
+    args(providers.gradleProperty("to").orElse("").get())
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
 }
 
 // ./gradlew runDev → sobe PostgreSQL embarcado + aplicação em modo dev.

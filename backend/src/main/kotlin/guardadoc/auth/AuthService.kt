@@ -62,8 +62,9 @@ class AuthService(
         try {
             email.sendOtp(normalized, code)
         } catch (e: Exception) {
-            // Não propaga detalhes (nem o código) para o cliente ou para os logs.
-            log.error("Falha ao enviar e-mail de OTP: {}", e.javaClass.simpleName)
+            // Não propaga detalhes ao cliente. No log, só o diagnóstico do adaptador.
+            val reason = if (e is EmailDeliveryException) e.message else e.javaClass.simpleName
+            log.error("Falha ao enviar e-mail de OTP: {}", reason)
         }
         audit.record(AuditEvent(AuditEventType.OTP_SOLICITADO))
     }

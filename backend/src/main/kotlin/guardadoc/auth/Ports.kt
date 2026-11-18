@@ -55,6 +55,12 @@ interface EmailSender {
     fun sendOtp(to: String, code: String)
 }
 
+/**
+ * Falha de envio com mensagem segura para log: os adaptadores nunca incluem
+ * senha, código OTP nem o endereço do destinatário.
+ */
+class EmailDeliveryException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+
 interface RateLimiter {
     /** Retorna false quando a chave excedeu o limite da janela. */
     fun tryAcquire(key: String): Boolean
