@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import guardadoc.account.AccountService
 import guardadoc.adapters.email.DevOutboxEmailSender
 import guardadoc.auth.AuthService
 import guardadoc.auth.SessionPrincipal
@@ -29,6 +30,9 @@ data class HttpSettings(
     val allowedOrigins: Set<String>,
     val cookieSecure: Boolean,
     val csrfSecret: ByteArray,
+    val previousCsrfSecrets: List<ByteArray> = emptyList(),
+    /** Recusa requisições que não chegaram por HTTPS (exceto /api/health). */
+    val requireHttps: Boolean = false,
     val trustProxy: Boolean,
     val staticDir: Path?,
     /** Habilita /dev/outbox. Nunca usar em produção. */
@@ -40,6 +44,7 @@ class HttpApi(
     private val auth: AuthService,
     private val documents: DocumentService,
     private val shares: ShareService,
+    private val accounts: AccountService,
     private val settings: HttpSettings,
     private val clock: Clock,
 ) {
@@ -68,6 +73,7 @@ class HttpApi(
     // ------------------------------------------------------------------ filtros
 
     private fun registerFilters(config: JavalinConfig) {
+        if (settings.requireHttps) config.routes.before(::enforceHttps)
         config.routes.before { ctx ->
             ctx.header("X-Content-Type-Options", "nosniff")
             ctx.header("Referrer-Policy", "no-referrer")
@@ -101,8 +107,10 @@ class HttpApi(
                 }
                 if (principal != null) {
                     val provided = ctx.header(CSRF_HEADER) ?: throw AppException.Forbidden("Token CSRF ausente")
-                    val expected = csrfToken(principal)
-                    if (!Crypto.constantTimeEquals(provided.toByteArray(), expected.toByteArray())) {
+                    val valid = (listOf(settings.csrfSecret) + settings.previousCsrfSecrets).any { secret ->
+                        Crypto.constantTimeEquals(provided.toByteArray(), csrfToken(principal, secret).toByteArray())
+                    }
+                    if (!valid) {
                         throw AppException.Forbidden("Token CSRF inválido")
                     }
                 }
@@ -138,6 +146,12 @@ class HttpApi(
         r.get("/api/me") { ctx ->
             val principal = ctx.requirePrincipal()
             ctx.json(MeResponse(principal.email, csrfToken(principal), principal.expiresAt))
+        }
+
+        r.delete("/api/me") { ctx ->
+            accounts.deleteAccount(ctx.requirePrincipal().userId)
+            setSessionCookie(ctx, "", Duration.ZERO)
+            ctx.status(HttpStatus.NO_CONTENT)
         }
 
         // --- Documentos
@@ -235,6 +249,8 @@ class HttpApi(
                 is AppException.TooManyRequests -> HttpStatus.TOO_MANY_REQUESTS
                 is AppException.PayloadTooLarge -> HttpStatus.CONTENT_TOO_LARGE
                 is AppException.UnsupportedMedia -> HttpStatus.UNSUPPORTED_MEDIA_TYPE
+                is AppException.Rejected -> HttpStatus.UNPROCESSABLE_CONTENT
+                is AppException.Unavailable -> HttpStatus.SERVICE_UNAVAILABLE
             }
             ctx.status(status).json(ErrorResponse(e.message ?: status.message))
         }
@@ -265,8 +281,31 @@ class HttpApi(
 
     // ---------------------------------------------------------------- helpers
 
-    private fun csrfToken(principal: SessionPrincipal): String =
-        Crypto.base64Url(Crypto.hmacSha256(settings.csrfSecret, principal.sessionId.toString()))
+    private fun csrfToken(principal: SessionPrincipal, secret: ByteArray = settings.csrfSecret): String =
+        Crypto.base64Url(Crypto.hmacSha256(secret, principal.sessionId.toString()))
+
+    /**
+     * HTTPS obrigatório. Atrás de proxy TLS, usa X-Forwarded-Proto (somente com
+     * TRUST_PROXY=true). Navegações GET são redirecionadas para PUBLIC_BASE_URL
+     * (nunca para o Host recebido, evitando open redirect); o resto é recusado.
+     */
+    private fun enforceHttps(ctx: Context) {
+        if (ctx.path() == "/api/health") return
+        val scheme = if (settings.trustProxy) {
+            ctx.header("X-Forwarded-Proto")?.substringBefore(',')?.trim()?.lowercase() ?: ctx.scheme()
+        } else {
+            ctx.scheme()
+        }
+        if (scheme == "https") return
+        val base = settings.publicBaseUrl.trimEnd('/')
+        if (ctx.method().name in SAFE_METHODS && base.startsWith("https://")) {
+            val query = ctx.queryString()?.let { "?$it" } ?: ""
+            ctx.redirect(base + ctx.path() + query, HttpStatus.PERMANENT_REDIRECT)
+            ctx.skipRemainingHandlers()
+            return
+        }
+        throw AppException.Forbidden("HTTPS obrigatório")
+    }
 
     private fun setSessionCookie(ctx: Context, token: String, maxAge: Duration) {
         val secure = if (settings.cookieSecure) "; Secure" else ""

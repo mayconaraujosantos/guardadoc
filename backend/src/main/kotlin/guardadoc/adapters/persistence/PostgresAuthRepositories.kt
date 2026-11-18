@@ -17,6 +17,16 @@ class PostgresUserRepository(private val db: Database) : UserRepository {
             User(it.uuid("id"), it.getString("email"))
         }!!
     }
+
+    override fun delete(userId: UUID) {
+        db.transaction { c ->
+            c.update(
+                "DELETE FROM desafios_otp WHERE lower(email) = (SELECT lower(email) FROM usuarios WHERE id = ?)",
+                userId,
+            )
+            c.update("DELETE FROM usuarios WHERE id = ?", userId)
+        }
+    }
 }
 
 class PostgresOtpRepository(private val db: Database) : OtpRepository {

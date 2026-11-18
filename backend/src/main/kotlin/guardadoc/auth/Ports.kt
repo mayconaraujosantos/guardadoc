@@ -25,6 +25,9 @@ data class SessionPrincipal(val sessionId: UUID, val userId: UUID, val email: St
 
 interface UserRepository {
     fun findOrCreate(email: String): User
+
+    /** Remove o usuário e, em cascata, sessões, documentos, links e desafios OTP. */
+    fun delete(userId: UUID)
 }
 
 interface OtpRepository {

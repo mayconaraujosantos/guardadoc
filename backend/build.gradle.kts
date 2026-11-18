@@ -33,6 +33,15 @@ dependencies {
     implementation("org.eclipse.angus:angus-mail:2.0.5")
     implementation("ch.qos.logback:logback-classic:1.5.18")
 
+    // Bucket privado S3 (ou compatível: R2, MinIO, B2) com cliente HTTP leve.
+    implementation(platform("software.amazon.awssdk:bom:2.59.3"))
+    implementation("software.amazon.awssdk:s3") {
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+        exclude(group = "software.amazon.awssdk", module = "apache5-client")
+    }
+    implementation("software.amazon.awssdk:url-connection-client")
+
     // PostgreSQL embarcado (sem Docker) apenas para desenvolvimento local e testes.
     "devImplementation"("io.zonky.test:embedded-postgres:2.2.2")
     "devImplementation"(platform("io.zonky.test.postgres:embedded-postgres-binaries-bom:17.11.0"))
@@ -43,6 +52,8 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("io.zonky.test:embedded-postgres:2.2.2")
     testImplementation(platform("io.zonky.test.postgres:embedded-postgres-binaries-bom:17.11.0"))
+    // Servidor S3 em memória para testar o adaptador S3 sem Docker.
+    testImplementation("org.gaul:s3proxy:4.2.0")
 }
 
 application {

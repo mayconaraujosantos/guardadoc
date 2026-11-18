@@ -12,6 +12,8 @@ import java.time.Instant
 
 data class AuthSettings(
     val otpHmacSecret: ByteArray,
+    /** Segredos anteriores aceitos na verificação durante uma rotação. */
+    val previousOtpHmacSecrets: List<ByteArray> = emptyList(),
     val otpTtl: Duration = Duration.ofMinutes(5),
     val otpMaxAttempts: Int = 5,
     val sessionTtl: Duration = Duration.ofHours(12),
@@ -75,7 +77,9 @@ class AuthService(
 
         val now = clock.instant()
         val challenge = otps.registerAttempt(normalized, now) ?: throw invalidCode()
-        val matches = Crypto.constantTimeEquals(challenge.digest, digest(normalized, code))
+        val matches = (listOf(settings.otpHmacSecret) + settings.previousOtpHmacSecrets).any { secret ->
+            Crypto.constantTimeEquals(challenge.digest, digest(normalized, code, secret))
+        }
         if (!matches || !otps.consume(challenge.id, now)) {
             audit.record(AuditEvent(AuditEventType.LOGIN_FALHA))
             throw invalidCode()
@@ -100,7 +104,8 @@ class AuthService(
         principal?.let { audit.record(AuditEvent(AuditEventType.LOGOUT, userId = it.userId)) }
     }
 
-    private fun digest(email: String, code: String) = Crypto.hmacSha256(settings.otpHmacSecret, "$email:$code")
+    private fun digest(email: String, code: String, secret: ByteArray = settings.otpHmacSecret) =
+        Crypto.hmacSha256(secret, "$email:$code")
 
     private fun invalidCode() = AppException.Unauthorized("Código inválido ou expirado")
 

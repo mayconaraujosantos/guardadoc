@@ -18,6 +18,7 @@ class DocumentService(
     private val storage: DocumentStorage,
     private val audit: AuditRepository,
     private val clock: Clock,
+    private val scanner: MalwareScanner = NoMalwareScanner,
 ) {
     private val log = LoggerFactory.getLogger(DocumentService::class.java)
 
@@ -45,6 +46,18 @@ class DocumentService(
         val extension = name.substringAfterLast('.', "").lowercase()
         if (extension !in detected.extensions) {
             throw AppException.UnsupportedMedia("A extensão do arquivo não corresponde ao conteúdo")
+        }
+
+        ContentValidator.validate(detected, bytes)
+        val verdict = try {
+            scanner.scan(bytes)
+        } catch (e: Exception) {
+            log.error("Antivírus indisponível: {}", e.javaClass.simpleName)
+            throw AppException.Unavailable("Verificação de segurança indisponível; tente novamente")
+        }
+        if (verdict is ScanResult.Infected) {
+            audit.record(AuditEvent(AuditEventType.UPLOAD_REJEITADO_MALWARE, userId = ownerId))
+            throw AppException.Rejected("Arquivo rejeitado pela verificação de segurança")
         }
 
         val document = Document(
@@ -90,7 +103,7 @@ class DocumentService(
     fun purgePendingFiles(limit: Int = 100): Int =
         documents.pendingFileRemoval(limit).count { removeFile(it) }
 
-    private fun removeFile(document: Document): Boolean = try {
+    internal fun removeFile(document: Document): Boolean = try {
         storage.delete(document.storageKey)
         documents.markFileRemoved(document.id, clock.instant())
         audit.record(AuditEvent(AuditEventType.ARQUIVO_REMOVIDO, documentId = document.id))
