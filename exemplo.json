@@ -1,0 +1,287 @@
+{
+  "project": {
+    "name": "GuardaDoc",
+    "type": "POC",
+    "architecture": "Hexagonal Architecture",
+    "deploymentStyle": "Modular Monolith",
+    "principles": [
+      "Low Cost",
+      "Security by Design",
+      "Ports and Adapters",
+      "Provider Independence"
+    ]
+  },
+  "frontend": {
+    "name": "WEB CLIENT",
+    "technologies": [
+      "Vue 3",
+      "JavaScript",
+      "PWA"
+    ],
+    "hosting": {
+      "provider": "Served by backend",
+      "type": "Same-site static files"
+    },
+    "responsibilities": [
+      "User Interface",
+      "OTP Authentication Flow",
+      "Document Management",
+      "Secure Sharing Interface"
+    ]
+  },
+  "backend": {
+    "name": "APPLICATION BACKEND",
+    "language": "Kotlin",
+    "framework": "Javalin",
+    "architecture": "Hexagonal Architecture",
+    "modules": [
+      {
+        "name": "Authentication",
+        "useCases": [
+          "RequestOtp",
+          "VerifyOtp",
+          "CreateSession"
+        ],
+        "ports": {
+          "inbound": [
+            "RequestOtp",
+            "VerifyOtp"
+          ],
+          "outbound": [
+            "EmailSender",
+            "OtpRepository",
+            "SessionRepository"
+          ]
+        }
+      },
+      {
+        "name": "Documents",
+        "useCases": [
+          "UploadDocument",
+          "DownloadDocument",
+          "ListDocuments",
+          "DeleteDocument"
+        ],
+        "ports": {
+          "outbound": [
+            "DocumentRepository",
+            "DocumentStorage",
+            "AuditRepository"
+          ]
+        }
+      },
+      {
+        "name": "SecureSharing",
+        "useCases": [
+          "CreateShareLink",
+          "AccessSharedDocument",
+          "RevokeShareLink"
+        ],
+        "rules": [
+          "Cryptographically Secure Random Token",
+          "Store Token Hash Only",
+          "Mandatory Expiration",
+          "Owner Revocation",
+          "Read Only Access",
+          "Validate Authorization Before File Access"
+        ],
+        "ports": {
+          "outbound": [
+            "ShareRepository",
+            "DocumentRepository",
+            "DocumentStorage",
+            "AuditRepository"
+          ]
+        }
+      }
+    ],
+    "jvmTarget": 21
+  },
+  "adapters": {
+    "inbound": [
+      {
+        "name": "HttpApiAdapter",
+        "technology": "Javalin",
+        "protocol": "HTTPS REST"
+      }
+    ],
+    "outbound": [
+      {
+        "name": "EmailAdapter",
+        "port": "EmailSender",
+        "implementations": [
+          "SmtpEmailSender",
+          "ProviderApiEmailSender"
+        ],
+        "replaceable": true
+      },
+      {
+        "name": "PostgresPersistenceAdapter",
+        "ports": [
+          "OtpRepository",
+          "SessionRepository",
+          "DocumentRepository",
+          "ShareRepository",
+          "AuditRepository"
+        ],
+        "technology": "PostgreSQL",
+        "replaceable": true
+      },
+      {
+        "name": "PrivateDocumentStorageAdapter",
+        "port": "DocumentStorage",
+        "responsibilities": [
+          "Store Files Privately",
+          "Read Files",
+          "Delete Files"
+        ],
+        "replaceable": true
+      }
+    ]
+  },
+  "authentication": {
+    "method": "Email OTP",
+    "passwordRequired": false,
+    "codeDigits": 6,
+    "expirationMinutes": 5,
+    "singleUse": true,
+    "maxAttempts": 5,
+    "rateLimiting": true,
+    "invalidatePreviousChallenge": true,
+    "genericResponsesToPreventAccountEnumeration": true,
+    "storage": {
+      "otpPlaintext": false,
+      "digest": "HMAC with Server-Side Secret",
+      "attemptCount": true
+    },
+    "session": {
+      "issuer": "Backend",
+      "token": "Cryptographically Random Opaque Token; Store Hash Only",
+      "secureCookies": true,
+      "httpOnly": true,
+      "sameSite": "Lax",
+      "csrfProtection": true,
+      "httpsRequired": true
+    }
+  },
+  "uploads": {
+    "maximumSizeBytes": 10485760,
+    "allowedTypes": [
+      "application/pdf",
+      "image/jpeg",
+      "image/png"
+    ],
+    "validateActualContent": true,
+    "generateOpaqueStorageKeys": true,
+    "authorizeOwnerBeforeEveryOperation": true,
+    "downloadHeaders": [
+      "Content-Disposition: attachment",
+      "X-Content-Type-Options: nosniff",
+      "Cache-Control: no-store"
+    ]
+  },
+  "data": {
+    "database": {
+      "technology": "PostgreSQL",
+      "entities": [
+        "User",
+        "OtpChallenge",
+        "Session",
+        "DocumentMetadata",
+        "ShareLink",
+        "AuditEvent"
+      ]
+    },
+    "documentStorage": {
+      "access": "Private",
+      "encryptionAtRest": "Provider-managed encryption for objects, database, and backups",
+      "publicDirectAccess": false,
+      "endToEndEncryption": false,
+      "keyManagement": "Keep keys outside source control and data storage; restrict access and define rotation/recovery"
+    },
+    "shareLinkMetadata": [
+      "DocumentId",
+      "TokenHash",
+      "CreatedAt",
+      "ExpiresAt",
+      "RevokedAt",
+      "CreatedBy",
+      "OptionalDownloadLimit",
+      "DownloadCount"
+    ]
+  },
+  "security": {
+    "transport": "HTTPS/TLS",
+    "secrets": "Environment Variables or Secret Manager",
+    "rateLimiting": true,
+    "avoidLogging": [
+      "OTP Values",
+      "Full Share Tokens",
+      "Session Tokens",
+      "Authentication Secrets",
+      "Document Contents"
+    ],
+    "authorization": "Enforced by Backend",
+    "fileAccess": "Backend Validates Owner or Share Authorization Before Reading File",
+    "pwaCache": "Static application shell only; never cache API responses, documents, OTPs, sessions, or share tokens",
+    "sharePage": {
+      "referrerPolicy": "no-referrer",
+      "thirdPartyResources": false,
+      "cacheControl": "no-store"
+    },
+    "audit": {
+      "collectIpAndUserAgentByDefault": false,
+      "retentionMustBeDefined": true,
+      "neverStoreSecretsOrDocumentContents": true
+    },
+    "privacy": {
+      "lgpdComplianceClaim": false,
+      "defineRetentionDeletionAndPrivacyNoticeBeforeRealUsers": true
+    }
+  },
+  "relationships": [
+    {
+      "from": "Client",
+      "to": "WebClient",
+      "type": "User Interaction"
+    },
+    {
+      "from": "WebClient",
+      "to": "HttpApiAdapter",
+      "type": "HTTPS REST"
+    },
+    {
+      "from": "HttpApiAdapter",
+      "to": "ApplicationCore",
+      "type": "Inbound Port / Use Case"
+    },
+    {
+      "from": "ApplicationCore",
+      "to": "EmailSender",
+      "type": "Outbound Port"
+    },
+    {
+      "from": "EmailAdapter",
+      "to": "EmailProvider",
+      "type": "SMTP or HTTPS API"
+    },
+    {
+      "from": "ApplicationCore",
+      "to": "PostgresPersistenceAdapter",
+      "type": "Outbound Ports"
+    },
+    {
+      "from": "ApplicationCore",
+      "to": "PrivateDocumentStorageAdapter",
+      "type": "DocumentStorage Port"
+    }
+  ],
+  "costStrategy": {
+    "priority": "Minimize Operating Costs",
+    "frontendHosting": "Render Free Tier if Suitable",
+    "emailProvider": "Replaceable Provider with Free Tier if Available",
+    "database": "Free Tier if Suitable",
+    "monitoring": "Start with Available Free Options",
+    "note": "Verify Current Quotas, Limits, and Billing Before Deployment"
+  }
+}

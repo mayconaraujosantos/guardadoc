@@ -1,0 +1,39 @@
+# Execução local completa: PostgreSQL + aplicação (API + PWA no mesmo site).
+# Para HTTPS em produção, coloque um proxy TLS na frente e mantenha COOKIE_SECURE=true.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: guardadoc
+      POSTGRES_USER: guardadoc
+      POSTGRES_PASSWORD: guardadoc
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guardadoc"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: dev # habilita /dev/outbox; em produção remova e configure SMTP_*
+      APP_SECRET: troque-este-segredo-por-um-valor-aleatorio-longo
+      DATABASE_URL: jdbc:postgresql://db:5432/guardadoc
+      DATABASE_USER: guardadoc
+      DATABASE_PASSWORD: guardadoc
+      PUBLIC_BASE_URL: http://localhost:7070
+      COOKIE_SECURE: "false" # somente HTTP local
+    ports:
+      - "7070:7070"
+    volumes:
+      - storage:/app/data/storage
+
+volumes:
+  pgdata:
+  storage:

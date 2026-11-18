@@ -1,0 +1,47 @@
+sequenceDiagram
+    actor U as Proprietario
+    participant F as PWA Vue
+    participant B as Backend Javalin
+    participant E as Provedor de e-mail
+    participant D as PostgreSQL
+    participant S as Armazenamento privado
+    actor R as Destinatario
+
+    U->>F: Informa e-mail para entrar
+    F->>B: POST /api/auth/otp
+    B->>B: Aplica limite por e-mail/IP e gera OTP
+    B->>D: Salva HMAC do OTP, expiracao e tentativas
+    B->>E: Envia codigo por e-mail
+    B-->>F: Resposta generica sem revelar cadastro
+    E-->>U: Entrega codigo
+    U->>F: Informa codigo recebido
+    F->>B: POST /api/auth/otp/verify
+    B->>D: Valida digest, validade e tentativas
+    B->>D: Consome desafio e cria sessao (hash do token)
+    B-->>F: Define cookie Secure, HttpOnly, SameSite
+
+    U->>F: Seleciona arquivo PDF/JPEG/PNG
+    F->>B: POST /api/documents (sessao autenticada)
+    B->>B: Valida CSRF, dono, tamanho e conteudo real
+    B->>S: Grava com chave opaca em bucket privado
+    S-->>B: Confirma armazenamento
+    B->>D: Salva metadados e referencia do objeto
+    B-->>F: Retorna metadados (Cache-Control: no-store)
+
+    U->>F: Solicita link de compartilhamento
+    F->>B: POST /api/documents/{id}/shares
+    B->>B: Autentica sessao e autoriza proprietario
+    B->>B: Gera token aleatorio de alta entropia
+    B->>D: Salva somente hash do token e expiracao obrigatoria
+    B-->>F: Retorna link uma unica vez
+    F-->>U: Exibe link para copiar
+
+    R->>B: Acessa link com token
+    B->>D: Valida hash, expiracao, revogacao e limite
+    D-->>B: Estado do compartilhamento
+    B->>S: Le arquivo somente se autorizado
+    S-->>B: Conteudo do documento
+    B-->>R: Entrega como anexo via HTTPS, sem cache
+
+    Note over F: Service worker armazena somente shell e assets estaticos
+    Note over B,D: Nunca registrar OTP, token completo ou conteudo de documento
