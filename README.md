@@ -35,9 +35,10 @@ conformidade legal ou com a LGPD.
   `backend/build.gradle.kts` (o plugin foojay baixa o JDK automaticamente) e a
   imagem do `Dockerfile`.
 - Banco de dados: PostgreSQL (migrações com Flyway, acesso via JDBC/HikariCP).
-- Arquivos: armazenamento privado em disco local (`LocalFileSystemStorage`),
-  acessado somente pelo backend; trocável por um bucket privado implementando a
-  porta `DocumentStorage`.
+- Arquivos: armazenamento privado acessado somente pelo backend — disco local
+  (`LocalFileSystemStorage`) ou bucket S3/compatível privado com SSE
+  (`S3DocumentStorage`, `STORAGE_BACKEND=s3`).
+- Antivírus: ClamAV via protocolo `INSTREAM` (`CLAMAV_HOST`), opcional.
 - E-mail: SMTP (`SmtpEmailSender`) ou, em desenvolvimento, outbox em memória
   consultável em `/dev/outbox`.
 - Implantação: frontend e API servidos no mesmo site pelo backend (sem CORS).
@@ -51,19 +52,24 @@ backend/
     auth/        núcleo: RequestOtp, VerifyOtp/CreateSession + portas
     documents/   núcleo: Upload, List, Download, Delete + portas
     sharing/     núcleo: CreateShareLink, AccessSharedDocument, RevokeShareLink
+    account/     núcleo: exclusão da conta pelo titular
+    maintenance/ retenção de dados, varredura de órfãos, lock entre instâncias
     shared/      criptografia, erros de aplicação, porta de auditoria
     adapters/
       http/         adaptador de entrada (Javalin): rotas, CSRF, cabeçalhos
       persistence/  adaptadores PostgreSQL de todas as portas de repositório
-      storage/      armazenamento privado de arquivos
+      storage/      armazenamento privado: disco local ou S3
+      scan/         antivírus ClamAV
       email/        SMTP e outbox de desenvolvimento
-      ratelimit/    limitador em memória
+      ratelimit/    limitador em PostgreSQL (multi-instância) ou em memória
     GuardaDocApp.kt  composition root (liga portas a adaptadores)
   src/main/resources/db/migration/   migrações Flyway
   src/dev/kotlin/    DevMain: PostgreSQL embarcado para desenvolvimento
   src/test/kotlin/   testes de integração (PostgreSQL embarcado, HTTP real)
-frontend/            PWA Vue/Vite
+frontend/            PWA Vue/Vite (e2e/: testes Playwright)
 docs/                artefatos de arquitetura e fluxos de dados
+docs/politicas/      segredos e chaves; retenção e exclusão
+.github/workflows/   CI: testes do backend, E2E e build da imagem
 ```
 
 ## Como executar
@@ -92,25 +98,49 @@ Para desenvolver o frontend com hot reload, mantenha `runDev` rodando e execute
 docker compose up --build
 ```
 
+Ambiente mais próximo de produção, com bucket S3 privado local (s3proxy) e
+antivírus ClamAV (a primeira subida do ClamAV leva alguns minutos):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
+```
+
 ### Testes
 
 ```bash
-cd backend && ./gradlew test
+cd backend && ./gradlew test        # integração: PostgreSQL embarcado, S3 em memória, clamd falso
+cd frontend && npm run test:e2e     # E2E: build do PWA + backend real na porta 7071
 ```
+
+Os testes E2E sobem o próprio backend com um banco embarcado descartável
+(`backend/build/e2e-pg`), sem tocar nos dados de `backend/data/`. Na primeira
+vez, instale o navegador com `npx playwright install chromium`.
 
 ### Variáveis de ambiente
 
 | Variável | Padrão | Descrição |
 |---|---|---|
 | `APP_ENV` | — | `dev` habilita `/dev/outbox` e segredo aleatório |
-| `APP_SECRET` | obrigatório fora de dev | segredo mestre (≥ 32 caracteres); deriva as chaves de OTP e CSRF |
+| `APP_SECRET` | obrigatório fora de dev | segredo mestre (≥ 32 caracteres); deriva as chaves de OTP, CSRF e limitador |
+| `APP_SECRET_PREVIOUS` | — | segredo anterior aceito durante a rotação (ver `docs/politicas/segredos-e-chaves.md`) |
 | `PORT` | `7070` | porta HTTP |
 | `DATABASE_URL` / `DATABASE_USER` / `DATABASE_PASSWORD` | `jdbc:postgresql://localhost:5432/guardadoc`, `guardadoc`, `guardadoc` | PostgreSQL |
 | `PUBLIC_BASE_URL` | `http://localhost:$PORT` | base dos links de compartilhamento |
 | `ALLOWED_ORIGINS` | `PUBLIC_BASE_URL`, `http://localhost:5173` | allowlist de `Origin` para requisições que alteram dados |
 | `COOKIE_SECURE` | `true` (`false` no `runDev`) | atributo `Secure` do cookie de sessão |
-| `TRUST_PROXY` | `false` | usa `X-Forwarded-For` para limitar por IP |
-| `STORAGE_DIR` | `./data/storage` | diretório privado dos arquivos |
+| `REQUIRE_HTTPS` | `true` fora de dev | recusa HTTP puro (exceto `/api/health`); GETs são redirecionados para `PUBLIC_BASE_URL` |
+| `TRUST_PROXY` | `false` | confia em `X-Forwarded-For`/`X-Forwarded-Proto` do proxy TLS |
+| `RATE_LIMIT_STORE` | `postgres` | `postgres` (compartilhado entre instâncias) ou `memory` |
+| `STORAGE_BACKEND` | `local` | `local` (disco) ou `s3` |
+| `STORAGE_DIR` | `./data/storage` | diretório privado dos arquivos (backend `local`) |
+| `S3_BUCKET` | obrigatório com `s3` | bucket privado |
+| `S3_REGION` / `S3_ENDPOINT` / `S3_PATH_STYLE` | `us-east-1` / — / `false` | região; endpoint e path-style para S3 compatível (R2, MinIO, B2...) |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | — | credenciais; se ausentes, usa a cadeia padrão da AWS (IAM) |
+| `S3_SSE` | `true` | criptografia em repouso no servidor (SSE) |
+| `CLAMAV_HOST` / `CLAMAV_PORT` | — / `3310` | antivírus; sem host, uploads não são verificados (aviso no log fora de dev) |
+| `RETENTION_SHARE_LINKS_DAYS` | `90` | retenção de links expirados/revogados |
+| `RETENTION_DELETED_DOCUMENTS_DAYS` | `30` | retenção de metadados de documentos excluídos |
+| `RETENTION_AUDIT_DAYS` | `180` | retenção de eventos de auditoria |
 | `STATIC_DIR` | `../frontend/dist` | build do PWA |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS` | — | envio de e-mail real (obrigatório fora de dev) |
 
@@ -122,6 +152,8 @@ cd backend && ./gradlew test
 | POST | `/api/auth/otp/verify` | valida código, cria sessão e devolve token CSRF |
 | GET | `/api/me` | sessão atual e token CSRF |
 | POST | `/api/auth/logout` | revoga a sessão |
+| DELETE | `/api/me` | exclui a conta, todos os documentos, arquivos e links |
+| GET | `/api/health` | verificação de saúde (dispensa HTTPS) |
 | GET/POST | `/api/documents` | lista / envia (multipart, campo `file`) |
 | GET | `/api/documents/{id}/download` | baixa como anexo |
 | DELETE | `/api/documents/{id}` | exclui documento, revoga links e remove arquivo |
@@ -132,13 +164,24 @@ cd backend && ./gradlew test
 
 Requisições autenticadas que alteram dados exigem o cabeçalho `X-CSRF-Token`.
 
+Uploads também podem ser recusados com `422` (rejeitado pelo antivírus) ou
+`503` (antivírus indisponível — nada é armazenado).
+
+### Operação
+
+- **Várias instâncias:** o limitador de requisições fica no PostgreSQL, e as
+  rotinas agendadas (limpeza de arquivos pendentes a cada 5 min; retenção e
+  varredura de órfãos a cada hora) rodam em uma única instância por vez via
+  advisory lock.
+- **Políticas:** `docs/politicas/segredos-e-chaves.md` (inventário e rotação) e
+  `docs/politicas/retencao-e-exclusao.md` (prazos, exclusão, backups).
+
 ### Limitações conhecidas da POC
 
-- Limitador de requisições em memória: adequado a uma única instância.
-- Armazenamento em disco local; em produção usar bucket privado com
-  criptografia em repouso gerenciada pelo provedor.
-- Sem limpeza automática de objetos órfãos gerados por falhas fora do fluxo de
-  upload (o upload já compensa falhas ao gravar metadados).
+- Backups, aviso de privacidade e resposta a incidentes ainda precisam ser
+  definidos (checklist em `docs/politicas/retencao-e-exclusao.md`).
+- Sem antivírus configurado, os uploads passam apenas pela validação de tipo e
+  conteúdo.
 
 ## Requisitos de segurança da POC
 
@@ -301,8 +344,8 @@ CREATE INDEX idx_eventos_auditoria_criado ON eventos_auditoria (criado_em);
 
 ## Critérios de aceite da POC
 
-Cobertos por testes de integração em `backend/src/test/kotlin` (exceto o cache
-do PWA, garantido pela configuração do Workbox em `frontend/vite.config.js`):
+Cobertos por testes de integração em `backend/src/test/kotlin` e, para o cache
+do PWA e os fluxos na interface, pelos testes E2E em `frontend/e2e`:
 
 - OTP expira, só pode ser consumido uma vez, é rejeitado após cinco tentativas
   inválidas e está sujeito a limite de requisições, inclusive com tentativas
