@@ -1,5 +1,6 @@
 package guardadoc
 
+import guardadoc.adapters.persistence.PostgresJobLock
 import guardadoc.adapters.persistence.queryOne
 import guardadoc.adapters.ratelimit.PostgresRateLimiter
 import guardadoc.shared.Crypto
@@ -150,6 +151,20 @@ class OperationsTest {
             assertEquals(1, t.app.maintenanceService.sweepOrphans())
             assertEquals(1, t.storedFileCount())
             assertEquals(1, c.json(c.get("/api/documents")).size())
+        }
+    }
+
+    @Test
+    fun `rotina agendada roda em uma unica instancia por vez`() {
+        TestApp().use { t ->
+            val lockA = PostgresJobLock(t.database)
+            val lockB = PostgresJobLock(t.database) // outra instância, mesmo banco
+            val nested = lockA.tryRun("manutencao") {
+                lockB.tryRun("manutencao") { "rodou" } // ocupado: não executa
+            }
+            assertEquals(null, nested)
+            assertEquals("outro", lockA.tryRun("manutencao") { lockB.tryRun("outra-rotina") { "outro" } })
+            assertEquals("livre", lockB.tryRun("manutencao") { "livre" }) // liberado ao terminar
         }
     }
 

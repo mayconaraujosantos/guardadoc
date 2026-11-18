@@ -27,6 +27,8 @@ import guardadoc.documents.DocumentService
 import guardadoc.documents.DocumentStorage
 import guardadoc.documents.MalwareScanner
 import guardadoc.documents.NoMalwareScanner
+import guardadoc.adapters.persistence.PostgresJobLock
+import guardadoc.maintenance.JobLock
 import guardadoc.maintenance.MaintenanceService
 import guardadoc.sharing.ShareService
 import io.javalin.Javalin
@@ -58,7 +60,11 @@ class GuardaDocApp(
 
     private val scanner: MalwareScanner = scannerOverride
         ?: config.clamAvHost?.let { ClamAvScanner(it, config.clamAvPort) }
-        ?: NoMalwareScanner
+        ?: NoMalwareScanner.also {
+            if (!config.dev) log.warn("CLAMAV_HOST não configurado: uploads NÃO passam por antivírus")
+        }
+
+    val jobLock: JobLock = PostgresJobLock(database)
 
     private val audit = PostgresAuditRepository(database)
     private val users = PostgresUserRepository(database)
@@ -127,14 +133,15 @@ class GuardaDocApp(
     }
 
     private fun scheduleMaintenance() {
+        // Com várias instâncias, cada rotina roda em uma só por vez (advisory lock).
         // Reprocessa remoções de arquivos que falharam (documentos já inacessíveis).
         scheduler.scheduleWithFixedDelay({
-            runCatching { documentService.purgePendingFiles() }
+            runCatching { jobLock.tryRun("arquivos-pendentes") { documentService.purgePendingFiles() } }
                 .onFailure { log.warn("Falha na limpeza de arquivos: {}", it.javaClass.simpleName) }
         }, 1, 5, TimeUnit.MINUTES)
         // Retenção de dados e varredura de objetos órfãos.
         scheduler.scheduleWithFixedDelay({
-            runCatching { maintenanceService.runAll() }
+            runCatching { jobLock.tryRun("manutencao") { maintenanceService.runAll() } }
                 .onFailure { log.warn("Falha na manutenção: {}", it.javaClass.simpleName) }
         }, 10, 60, TimeUnit.MINUTES)
     }

@@ -40,6 +40,12 @@ data class RetentionReport(
 
 data class MaintenanceReport(val pendingFilesRemoved: Int, val retention: RetentionReport, val orphansRemoved: Int)
 
+/** Porta de saída: exclusão mútua entre instâncias para rotinas agendadas. */
+interface JobLock {
+    /** Executa [block] se o lock [name] estiver livre; caso contrário, devolve null sem executar. */
+    fun <T> tryRun(name: String, block: () -> T): T?
+}
+
 /** Porta de saída: remoção de dados vencidos conforme a política. */
 interface RetentionRepository {
     fun purge(now: Instant, policy: RetentionPolicy): RetentionReport
