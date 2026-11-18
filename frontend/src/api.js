@@ -48,6 +48,10 @@ export const api = {
     await request('POST', '/api/auth/logout')
     setSession(null)
   },
+  async deleteAccount() {
+    await request('DELETE', '/api/me')
+    setSession(null)
+  },
   listDocuments: () => request('GET', '/api/documents'),
   uploadDocument(file) {
     const form = new FormData()

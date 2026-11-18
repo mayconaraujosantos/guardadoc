@@ -23,6 +23,9 @@ a { color: var(--primary); }
 .card { background: #fff; border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 12px rgba(15, 23, 42, .06); }
 .card.narrow { max-width: 26rem; margin: 2rem auto; }
 h1 { font-size: 1.35rem; margin: 0 0 .5rem; color: var(--primary-dark); }
+h2 { font-size: 1.1rem; margin: 0 0 .5rem; color: var(--primary-dark); }
+.card.account { margin-top: 1.25rem; }
+.card.account p.row { margin: 0; }
 
 form { display: flex; flex-direction: column; gap: .6rem; }
 form.row { flex-direction: row; align-items: flex-end; }
