@@ -9,21 +9,35 @@ export class ApiError extends Error {
   }
 }
 
+const OFFLINE_MESSAGE = 'Sem conexão. Verifique sua internet e tente novamente.'
+
 async function request(method, path, { json, body } = {}) {
   const headers = {}
   if (json !== undefined) headers['Content-Type'] = 'application/json'
   if (csrfToken && method !== 'GET') headers['X-CSRF-Token'] = csrfToken
-  const response = await fetch(path, {
-    method,
-    headers,
-    body: json !== undefined ? JSON.stringify(json) : body,
-    credentials: 'same-origin',
-    cache: 'no-store',
-  })
+  let response
+  try {
+    response = await fetch(path, {
+      method,
+      headers,
+      body: json !== undefined ? JSON.stringify(json) : body,
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
+  } catch {
+    throw new ApiError(0, OFFLINE_MESSAGE)
+  }
   if (response.status === 204) return null
   const data = await response.json().catch(() => null)
-  if (!response.ok) throw new ApiError(response.status, data?.error ?? `Erro ${response.status}`)
+  if (!response.ok) throw new ApiError(response.status, data?.error ?? messageFor(response.status))
   return data
+}
+
+function messageFor(status) {
+  if (status === 413) return 'Arquivo excede o limite de 10 MiB.'
+  if (status === 429) return 'Muitas tentativas. Aguarde alguns minutos.'
+  if (status >= 500) return 'O servidor não respondeu. Tente novamente.'
+  return `Erro ${status}`
 }
 
 function setSession(me) {
@@ -53,13 +67,49 @@ export const api = {
     setSession(null)
   },
   listDocuments: () => request('GET', '/api/documents'),
-  uploadDocument(file) {
-    const form = new FormData()
-    form.append('file', file)
-    return request('POST', '/api/documents', { body: form })
+
+  /** Upload com progresso (fetch ainda não expõe progresso de envio). */
+  uploadDocument(file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', '/api/documents')
+      xhr.withCredentials = true
+      if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken)
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress?.(e.loaded / e.total)
+      }
+      xhr.onload = () => {
+        let data = null
+        try {
+          data = JSON.parse(xhr.responseText)
+        } catch {
+          /* resposta sem JSON */
+        }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data)
+        else reject(new ApiError(xhr.status, data?.error ?? messageFor(xhr.status)))
+      }
+      xhr.onerror = () => reject(new ApiError(0, OFFLINE_MESSAGE))
+      const form = new FormData()
+      form.append('file', file)
+      xhr.send(form)
+    })
   },
+
   deleteDocument: (id) => request('DELETE', `/api/documents/${id}`),
   downloadUrl: (id) => `/api/documents/${id}/download`,
+
+  /** Conteúdo do documento só em memória (prévia); nunca vai para cache. */
+  async fetchDocumentBlob(id) {
+    let response
+    try {
+      response = await fetch(`/api/documents/${id}/download`, { credentials: 'same-origin', cache: 'no-store' })
+    } catch {
+      throw new ApiError(0, OFFLINE_MESSAGE)
+    }
+    if (!response.ok) throw new ApiError(response.status, messageFor(response.status))
+    return response.blob()
+  },
+
   listShares: (documentId) => request('GET', `/api/documents/${documentId}/shares`),
   createShare: (documentId, expiresInMinutes, downloadLimit) =>
     request('POST', `/api/documents/${documentId}/shares`, {
@@ -69,11 +119,39 @@ export const api = {
 }
 
 export function formatSize(bytes) {
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
   return `${bytes} bytes`
 }
 
 export function formatDate(iso) {
   return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+}
+
+const rtf = new Intl.RelativeTimeFormat('pt-BR', { numeric: 'auto' })
+
+/** "há 5 minutos", "em 3 dias", "ontem"... */
+export function formatRelative(iso, now = Date.now()) {
+  const diff = (new Date(iso).getTime() - now) / 1000
+  const abs = Math.abs(diff)
+  if (abs < 60) return diff < 0 ? 'agora há pouco' : 'em instantes'
+  if (abs < 3600) return rtf.format(Math.round(diff / 60), 'minute')
+  if (abs < 86400) return rtf.format(Math.round(diff / 3600), 'hour')
+  if (abs < 86400 * 30) return rtf.format(Math.round(diff / 86400), 'day')
+  return formatDate(iso)
+}
+
+export function fileKind(mimeType) {
+  if (mimeType === 'application/pdf') return { label: 'PDF', icon: 'file', tone: 'pdf' }
+  if (mimeType?.startsWith('image/')) return { label: mimeType === 'image/png' ? 'PNG' : 'JPEG', icon: 'image', tone: 'img' }
+  return { label: 'Arquivo', icon: 'file', tone: 'other' }
+}
+
+/** Vibração curta de confirmação (quando o aparelho suporta). */
+export function haptic(pattern = 10) {
+  try {
+    navigator.vibrate?.(pattern)
+  } catch {
+    /* sem suporte */
+  }
 }

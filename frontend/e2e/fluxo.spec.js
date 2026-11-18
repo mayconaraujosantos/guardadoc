@@ -1,17 +1,18 @@
 import { expect, test } from '@playwright/test'
-import { login, uniqueEmail, uploadPdf } from './helpers.js'
+import { confirm, goToTab, login, openShare, uniqueEmail, uploadPdf } from './helpers.js'
 
-test('login, upload, compartilhamento e download pelo link', async ({ page, context }) => {
+test('login, upload, compartilhamento e download pelo link', async ({ page, browser }) => {
   await login(page, uniqueEmail('fluxo'))
   await uploadPdf(page, 'RG.pdf')
 
-  await page.getByRole('button', { name: 'Compartilhar' }).click()
-  await page.getByRole('button', { name: 'Gerar link' }).click()
-  const url = await page.locator('.share-panel input[readonly]').inputValue()
+  const share = await openShare(page, 'RG.pdf')
+  await share.getByRole('radio', { name: '7 dias' }).click()
+  await share.getByRole('button', { name: 'Gerar link' }).click()
+  const url = await share.locator('.share-url').inputValue()
   expect(url).toMatch(/\/s\/[A-Za-z0-9_-]+$/)
 
   // Destinatário anônimo (sem cookie de sessão).
-  const anon = await context.browser().newContext()
+  const anon = await browser.newContext()
   const shared = await anon.newPage()
   const response = await shared.goto(url)
   expect(response.status()).toBe(200)
@@ -24,9 +25,12 @@ test('login, upload, compartilhamento e download pelo link', async ({ page, cont
   expect(download.headers()['content-disposition']).toContain('attachment')
   await anon.close()
 
-  // Revogado, o link deixa de funcionar.
-  await page.getByRole('button', { name: 'Revogar' }).click()
-  await expect(page.locator('.badge.revogado')).toBeVisible()
+  // Revogado (com confirmação), o link deixa de funcionar.
+  await share.getByRole('button', { name: 'Criar outro link' }).click()
+  await share.getByRole('button', { name: 'Revogar' }).click()
+  await confirm(page)
+  await expect(page.getByText('Link revogado.')).toBeVisible()
+  await expect(share.getByText('Nenhum link ativo.')).toBeVisible()
   expect((await page.request.get(url)).status()).toBe(404)
 })
 
@@ -37,7 +41,8 @@ test('service worker não armazena API, links nem documentos', async ({ page }) 
   // Gera tráfego de API com o service worker já ativo.
   await page.reload()
   await expect(page.locator('.doc-name')).toBeVisible()
-  await page.getByRole('link', { name: 'Baixar' }).evaluate((a) => fetch(a.href).then((r) => r.blob()))
+  const [doc] = await (await page.request.get('/api/documents')).json()
+  await page.evaluate((id) => fetch(`/api/documents/${id}/download`).then((r) => r.blob()), doc.id)
 
   const cached = await page.evaluate(async () => {
     const urls = []
@@ -56,11 +61,12 @@ test('exclusão de conta remove documentos e encerra a sessão', async ({ page }
   await login(page, email)
   await uploadPdf(page)
 
+  await goToTab(page, 'Conta')
   await page.getByTestId('abrir-exclusao').click()
-  const confirm = page.getByTestId('confirmar-exclusao')
-  await expect(confirm).toBeDisabled()
+  const submit = page.getByTestId('confirmar-exclusao')
+  await expect(submit).toBeDisabled()
   await page.getByTestId('confirmar-email').fill(email.toUpperCase())
-  await confirm.click()
+  await submit.click()
 
   await expect(page.getByText('Sua conta e todos os seus documentos foram excluídos.')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Entrar' })).toBeVisible()

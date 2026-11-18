@@ -1,30 +1,24 @@
 import { expect, test } from '@playwright/test'
-import { login, uniqueEmail, uploadPdf } from './helpers.js'
+import { confirm, goToTab, login, openShare, requestCode, uniqueEmail, uploadPdf } from './helpers.js'
 
 test('código OTP inválido mostra erro e não cria sessão', async ({ page }) => {
-  const email = uniqueEmail('otp')
-  await page.goto('/')
-  await page.getByLabel('E-mail').fill(email)
-  await page.getByRole('button', { name: 'Enviar código' }).click()
+  const code = await requestCode(page, uniqueEmail('otp'))
+  const wrong = code === '000000' ? '111111' : '000000'
+  await page.getByLabel('Código').fill(wrong) // envia sozinho ao completar
 
-  const outbox = await (await page.request.get('/dev/outbox')).json()
-  const wrong = outbox[email] === '000000' ? '111111' : '000000'
-  await page.getByLabel('Código').fill(wrong)
-  await page.getByRole('button', { name: 'Entrar' }).click()
-
-  await expect(page.locator('.alert.error')).toBeVisible()
+  await expect(page.locator('.banner.error')).toBeVisible()
   await expect(page.getByLabel('Código')).toHaveValue('')
   expect((await page.request.get('/api/me')).status()).toBe(401)
 })
 
 test('arquivo com conteúdo que não é PDF/JPEG/PNG é recusado', async ({ page }) => {
   await login(page, uniqueEmail('tipo'))
-  await page.locator('input[type=file]').setInputFiles({
+  await page.getByTestId('arquivo-input').setInputFiles({
     name: 'falso.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.from('<html><script>alert(1)</script></html>'),
   })
-  await expect(page.locator('.alert.error')).toBeVisible()
+  await expect(page.locator('.toast.error')).toBeVisible()
   await expect(page.getByText('Nenhum documento ainda.')).toBeVisible()
 })
 
@@ -32,10 +26,11 @@ test('link com limite de downloads deixa de funcionar ao esgotar', async ({ page
   await login(page, uniqueEmail('limite'))
   await uploadPdf(page)
 
-  await page.getByRole('button', { name: 'Compartilhar' }).click()
-  await page.getByLabel('Limite de downloads').fill('1')
-  await page.getByRole('button', { name: 'Gerar link' }).click()
-  const url = await page.locator('.share-panel input[readonly]').inputValue()
+  const share = await openShare(page, 'documento.pdf')
+  await share.getByRole('switch').check()
+  await share.getByLabel('Limite de downloads').fill('1')
+  await share.getByRole('button', { name: 'Gerar link' }).click()
+  const url = await share.locator('.share-url').inputValue()
 
   expect((await request.get(`${url}/download`)).status()).toBe(200)
   expect((await request.get(`${url}/download`)).status()).toBe(404)
@@ -43,7 +38,9 @@ test('link com limite de downloads deixa de funcionar ao esgotar', async ({ page
 
 test('logout encerra a sessão', async ({ page }) => {
   await login(page, uniqueEmail('logout'))
-  await page.getByRole('button', { name: 'Sair' }).click()
+  await goToTab(page, 'Conta')
+  await page.getByRole('button', { name: /^Sair/ }).click()
+  await confirm(page)
   await expect(page.getByRole('heading', { name: 'Entrar' })).toBeVisible()
   expect((await page.request.get('/api/me')).status()).toBe(401)
   await page.reload()

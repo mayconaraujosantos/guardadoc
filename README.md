@@ -22,6 +22,23 @@ exportado novamente.
   tokens.
 - Monólito modular com portas e adaptadores.
 
+### Experiência no celular (PWA)
+
+- Instalável (Android/Chrome com convite próprio; iPhone com instrução para
+  "Adicionar à Tela de Início"), abre em tela cheia, ícone *maskable* e atalhos
+  no ícone ("Tirar foto", "Enviar").
+- Navegação por abas inferiores, *bottom sheets* para ações e confirmações, e o
+  botão "voltar" do celular fecha a camada aberta em vez de sair do app.
+- Envio pela câmera, galeria ou arquivos (vários de uma vez), com progresso;
+  arrastar e soltar no desktop.
+- Compartilhamento pela folha nativa do sistema (Web Share) ou copiar link;
+  prazos em *chips* e limite de downloads com *stepper*.
+- Código de acesso em 6 caixas com preenchimento automático e envio ao
+  completar; atalho para abrir o webmail.
+- Puxar para atualizar, busca, *skeleton* de carregamento, toasts, aviso de
+  offline, vibração leve, modo escuro e áreas seguras (notch/barra de gestos).
+- Prévia de imagens apenas em memória (nunca em cache ou armazenamento).
+
 Fora do escopo da primeira POC: acesso offline aos documentos, armazenamento
 público, criptografia ponta a ponta, links protegidos por senha e alegações de
 conformidade legal ou com a LGPD.
@@ -145,7 +162,7 @@ docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
 
 ```bash
 cd backend && ./gradlew test        # integração: PostgreSQL embarcado, S3 em memória, clamd falso
-cd frontend && npm run test:e2e     # E2E: build do PWA + backend real na porta 7071
+cd frontend && npm run test:e2e     # E2E (desktop e celular emulado): build do PWA + backend real na porta 7071
 ```
 
 Os testes E2E sobem o próprio backend com um banco embarcado descartável

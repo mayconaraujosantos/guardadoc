@@ -16,7 +16,11 @@ export default defineConfig({
     baseURL,
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'desktop', use: { ...devices['Desktop Chrome'] } },
+    // Celular com toque e tela pequena (Chromium emulando um Pixel 7).
+    { name: 'mobile', use: { ...devices['Pixel 7'] } },
+  ],
   webServer: {
     command: 'npm run build && cd ../backend && ./gradlew runDev --no-daemon -q',
     url: `${baseURL}/api/health`,
