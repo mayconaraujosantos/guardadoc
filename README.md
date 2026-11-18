@@ -76,6 +76,21 @@ docs/politicas/      segredos e chaves; retenção e exclusão
 
 Pré-requisitos: JDK 21 e Node 20+. Docker é opcional.
 
+### Atalhos com `make`
+
+```bash
+make install          # dependências do frontend + Chromium do Playwright
+make dev              # build do PWA + API em http://localhost:7070 (OTPs em /dev/outbox)
+make dev-frontend     # Vite com hot reload em :5173 (com `make dev` em outro terminal)
+make test             # testes do backend + E2E
+make test-e2e         # só E2E; filtre com E2E_ARGS="-g 'logout'"
+make test-e2e-headed  # E2E com navegador visível (ou test-e2e-ui para o modo interativo)
+make docker-up-full   # Docker com S3 local e ClamAV
+make help             # lista todos os alvos
+```
+
+Os comandos equivalentes, sem `make`, estão abaixo.
+
 ### Desenvolvimento (sem Docker)
 
 ```bash
