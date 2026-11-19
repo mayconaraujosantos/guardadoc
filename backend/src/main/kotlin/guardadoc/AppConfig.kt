@@ -30,6 +30,8 @@ data class AppConfig(
     val rateLimitStore: String,
     val clamAvHost: String?,
     val clamAvPort: Int,
+    /** Pedidos de código por IP a cada 15 min (padrão 30; o E2E sobe para não esbarrar). */
+    val otpRequestsPerIp: Int = 30,
     val retention: RetentionPolicy,
 ) {
     enum class StorageBackend { LOCAL, S3 }
@@ -105,6 +107,7 @@ data class AppConfig(
                 rateLimitStore = get("RATE_LIMIT_STORE") ?: "postgres",
                 clamAvHost = get("CLAMAV_HOST"),
                 clamAvPort = get("CLAMAV_PORT")?.toInt() ?: 3310,
+                otpRequestsPerIp = get("RATE_LIMIT_OTP_PER_IP")?.toInt() ?: 30,
                 retention = RetentionPolicy(
                     inactiveShareLinks = days("RETENTION_SHARE_LINKS_DAYS", 90),
                     deletedDocumentMetadata = days("RETENTION_DELETED_DOCUMENTS_DAYS", 30),

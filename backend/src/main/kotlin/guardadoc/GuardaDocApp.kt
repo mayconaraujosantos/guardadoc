@@ -91,7 +91,7 @@ class GuardaDocApp(
         email = email,
         limits = AuthRateLimits(
             otpRequestByEmail = limiter("otp-email", 5, Duration.ofMinutes(15)),
-            otpRequestByIp = limiter("otp-ip", 30, Duration.ofMinutes(15)),
+            otpRequestByIp = limiter("otp-ip", config.otpRequestsPerIp, Duration.ofMinutes(15)),
             verifyByEmail = limiter("verify-email", 10, Duration.ofMinutes(15)),
             verifyByIp = limiter("verify-ip", 60, Duration.ofMinutes(15)),
         ),

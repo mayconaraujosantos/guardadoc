@@ -33,6 +33,8 @@ export default defineConfig({
       DEV_PG_CLEAN: 'true',
       DEV_PG_PORT: String(PORT + 47000),
       RATE_LIMIT_STORE: 'memory',
+      // A suíte inteira faz login dezenas de vezes do mesmo IP.
+      RATE_LIMIT_OTP_PER_IP: '1000',
     },
   },
 })

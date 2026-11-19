@@ -184,6 +184,7 @@ vez, instale o navegador com `npx playwright install chromium`.
 | `REQUIRE_HTTPS` | `true` fora de dev | recusa HTTP puro (exceto `/api/health`); GETs são redirecionados para `PUBLIC_BASE_URL` |
 | `TRUST_PROXY` | `false` | confia em `X-Forwarded-For`/`X-Forwarded-Proto` do proxy TLS |
 | `RATE_LIMIT_STORE` | `postgres` | `postgres` (compartilhado entre instâncias) ou `memory` |
+| `RATE_LIMIT_OTP_PER_IP` | `30` | Pedidos de código por IP a cada 15 min (o E2E usa um valor alto) |
 | `STORAGE_BACKEND` | `local` | `local` (disco) ou `s3` |
 | `STORAGE_DIR` | `./data/storage` | diretório privado dos arquivos (backend `local`) |
 | `S3_BUCKET` | obrigatório com `s3` | bucket privado |

@@ -59,10 +59,11 @@ async function load({ silent = false } = {}) {
 
 // ------------------------------------------------------------- upload
 
+/** @param {HTMLInputElement | null} input o elemento (o template já desembrulha o ref) */
 function pick(input) {
   addOpen.value = false
   // Abre o seletor no mesmo gesto do toque (exigência dos navegadores móveis).
-  input.value?.click()
+  input?.click()
 }
 
 function niceName(file, fromCamera) {
