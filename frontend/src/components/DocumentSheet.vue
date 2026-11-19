@@ -5,12 +5,14 @@ import { confirmAction } from '../composables/ui.js'
 import BottomSheet from './ui/BottomSheet.vue'
 import Icon from './ui/Icon.vue'
 import ImageViewer from './ImageViewer.vue'
+import CategoryPickerSheet from './CategoryPickerSheet.vue'
+import { categoryName } from '../composables/categories.js'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   doc: { type: Object, default: null },
 })
-const emit = defineEmits(['update:open', 'share', 'deleted', 'error'])
+const emit = defineEmits(['update:open', 'share', 'deleted', 'moved', 'error'])
 
 const isOpen = computed({ get: () => props.open, set: (v) => emit('update:open', v) })
 const kind = computed(() => fileKind(props.doc?.mimeType))
@@ -21,6 +23,8 @@ const previewUrl = ref('')
 const previewLoading = ref(false)
 const viewerOpen = ref(false)
 const deleting = ref(false)
+const pickerOpen = ref(false)
+const currentCategory = computed(() => categoryName(props.doc?.categoryId) || 'Sem categoria')
 
 function clearPreview() {
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
@@ -93,6 +97,11 @@ async function remove() {
           <span class="action-icon"><Icon name="download" /></span>
           <span><strong>Baixar</strong><small>Salvar uma cópia no aparelho</small></span>
         </a>
+        <button class="action" data-testid="mudar-categoria" @click="pickerOpen = true">
+          <span class="action-icon"><Icon name="folder" /></span>
+          <span class="grow"><strong>Categoria</strong><small>{{ currentCategory }}</small></span>
+          <Icon name="chevron" class="row-end" />
+        </button>
         <button class="action" @click="emit('share')">
           <span class="action-icon"><Icon name="share" /></span>
           <span><strong>Compartilhar</strong><small>Criar link com validade</small></span>
@@ -105,5 +114,6 @@ async function remove() {
     </template>
   </BottomSheet>
 
+  <CategoryPickerSheet v-model:open="pickerOpen" :doc="doc" @moved="emit('moved', $event)" @error="emit('error', $event)" />
   <ImageViewer v-model:open="viewerOpen" :src="previewUrl" :alt="doc?.name ?? ''" />
 </template>

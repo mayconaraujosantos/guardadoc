@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { pushBack } from '../../composables/backStack.js'
-import { layerClosed, layerOpened } from '../../composables/ui.js'
+import { isTopLayer, layerClosed, layerOpened } from '../../composables/ui.js'
 
 // Painel que sobe do rodapé (no desktop vira um diálogo central).
 // Fecha por: arrastar para baixo, tocar fora, Esc ou o "voltar" do celular.
@@ -21,12 +21,23 @@ let returnFocus = null
 const zIndex = ref(100)
 let layered = false
 
+// Esc na janela (não só dentro da sheet): o foco pode ter saído dela, por
+// exemplo quando um botão é desativado durante um envio.
+function onKeydown(event) {
+  if (event.key === 'Escape' && isTopLayer(zIndex.value)) {
+    event.stopPropagation()
+    close()
+  }
+}
+
 function lockScroll(lock) {
   if (lock && !layered) {
     zIndex.value = layerOpened()
     layered = true
+    window.addEventListener('keydown', onKeydown)
   } else if (!lock && layered) {
-    layerClosed()
+    window.removeEventListener('keydown', onKeydown)
+    layerClosed(zIndex.value)
     layered = false
   }
 }
@@ -88,7 +99,7 @@ const panelStyle = computed(() =>
 <template>
   <Teleport to="body">
     <Transition name="sheet" @after-leave="emit('closed')">
-      <div v-if="open" class="sheet-root" :style="{ zIndex }" @keydown.esc.stop="close">
+      <div v-if="open" class="sheet-root" :style="{ zIndex }">
         <div class="sheet-backdrop" @click="close" />
         <section
           ref="panel" class="sheet" role="dialog" aria-modal="true" :aria-label="title || undefined"

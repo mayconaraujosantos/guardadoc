@@ -8,6 +8,7 @@ import guardadoc.account.AccountService
 import guardadoc.adapters.email.DevOutboxEmailSender
 import guardadoc.auth.AuthService
 import guardadoc.auth.SessionPrincipal
+import guardadoc.documents.CategoryService
 import guardadoc.documents.DocumentService
 import guardadoc.shared.AppException
 import guardadoc.shared.Crypto
@@ -24,6 +25,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Clock
 import java.time.Duration
+import java.util.UUID
 
 data class HttpSettings(
     val publicBaseUrl: String,
@@ -43,6 +45,7 @@ data class HttpSettings(
 class HttpApi(
     private val auth: AuthService,
     private val documents: DocumentService,
+    private val categories: CategoryService,
     private val shares: ShareService,
     private val accounts: AccountService,
     private val settings: HttpSettings,
@@ -169,20 +172,52 @@ class HttpApi(
             } catch (e: Exception) {
                 throw AppException.PayloadTooLarge("Arquivo excede o limite de 10 MiB")
             } ?: throw AppException.Invalid("Envie o arquivo no campo 'file'")
+            val categoryId = ctx.formParam("categoryId")?.takeIf { it.isNotBlank() }?.let {
+                runCatching { UUID.fromString(it) }.getOrElse { throw AppException.Invalid("Categoria inválida") }
+            }
+            // Antes de ler/verificar o arquivo: categoria precisa ser do usuário.
+            categories.requireOwned(principal.userId, categoryId)
             val document = documents.upload(
                 ownerId = principal.userId,
                 clientFileName = file.filename(),
                 declaredMimeType = file.contentType(),
                 declaredSize = file.size(),
                 content = file.content(),
+                categoryId = categoryId,
             )
             ctx.status(HttpStatus.CREATED).json(DocumentResponse.of(document))
         }
         r.get("/api/documents/{id}/download") { ctx ->
             ctx.sendAttachment(documents.download(ctx.requirePrincipal().userId, ctx.uuidParam("id")))
         }
+        r.patch("/api/documents/{id}") { ctx ->
+            val body = ctx.parseBody<UpdateDocumentBody>()
+            val document = categories.assign(ctx.requirePrincipal().userId, ctx.uuidParam("id"), body.categoryId)
+            ctx.json(DocumentResponse.of(document))
+        }
         r.delete("/api/documents/{id}") { ctx ->
             documents.delete(ctx.requirePrincipal().userId, ctx.uuidParam("id"))
+            ctx.status(HttpStatus.NO_CONTENT)
+        }
+
+        // --- Categorias
+        r.get("/api/categories") { ctx ->
+            ctx.json(categories.list(ctx.requirePrincipal().userId).map(CategoryResponse::of))
+        }
+        r.post("/api/categories") { ctx ->
+            val principal = ctx.requirePrincipal()
+            val created = categories.create(principal.userId, ctx.parseBody<CategoryBody>().name.orEmpty())
+            ctx.status(HttpStatus.CREATED).json(CategoryResponse.of(created))
+        }
+        r.patch("/api/categories/{id}") { ctx ->
+            val principal = ctx.requirePrincipal()
+            val id = ctx.uuidParam("id")
+            val renamed = categories.rename(principal.userId, id, ctx.parseBody<CategoryBody>().name.orEmpty())
+            val count = categories.list(principal.userId).firstOrNull { it.category.id == id }?.documentCount ?: 0
+            ctx.json(CategoryResponse.of(renamed, count))
+        }
+        r.delete("/api/categories/{id}") { ctx ->
+            categories.delete(ctx.requirePrincipal().userId, ctx.uuidParam("id"))
             ctx.status(HttpStatus.NO_CONTENT)
         }
 

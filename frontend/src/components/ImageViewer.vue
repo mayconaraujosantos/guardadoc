@@ -33,7 +33,7 @@ onBeforeUnmount(() => release?.())
     <Transition name="fade">
       <div
         v-if="open" class="viewer" role="dialog" aria-modal="true" :aria-label="alt"
-        @keydown.esc="emit('update:open', false)"
+        @keydown.esc.stop="emit('update:open', false)"
       >
         <button class="icon-btn viewer-close" aria-label="Fechar" @click="emit('update:open', false)">
           <Icon name="x" :size="26" />

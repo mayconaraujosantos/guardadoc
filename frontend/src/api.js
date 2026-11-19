@@ -69,7 +69,7 @@ export const api = {
   listDocuments: () => request('GET', '/api/documents'),
 
   /** Upload com progresso (fetch ainda não expõe progresso de envio). */
-  uploadDocument(file, onProgress) {
+  uploadDocument(file, onProgress, categoryId = null) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       xhr.open('POST', '/api/documents')
@@ -90,11 +90,13 @@ export const api = {
       }
       xhr.onerror = () => reject(new ApiError(0, OFFLINE_MESSAGE))
       const form = new FormData()
+      if (categoryId) form.append('categoryId', categoryId)
       form.append('file', file)
       xhr.send(form)
     })
   },
 
+  setDocumentCategory: (id, categoryId) => request('PATCH', `/api/documents/${id}`, { json: { categoryId } }),
   deleteDocument: (id) => request('DELETE', `/api/documents/${id}`),
   downloadUrl: (id) => `/api/documents/${id}/download`,
 
@@ -109,6 +111,11 @@ export const api = {
     if (!response.ok) throw new ApiError(response.status, messageFor(response.status))
     return response.blob()
   },
+
+  listCategories: () => request('GET', '/api/categories'),
+  createCategory: (name) => request('POST', '/api/categories', { json: { name } }),
+  renameCategory: (id, name) => request('PATCH', `/api/categories/${id}`, { json: { name } }),
+  deleteCategory: (id) => request('DELETE', `/api/categories/${id}`),
 
   listShares: (documentId) => request('GET', `/api/documents/${documentId}/shares`),
   createShare: (documentId, expiresInMinutes, downloadLimit) =>

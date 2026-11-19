@@ -7,6 +7,7 @@ import guardadoc.adapters.http.HttpApi
 import guardadoc.adapters.http.HttpSettings
 import guardadoc.adapters.persistence.Database
 import guardadoc.adapters.persistence.PostgresAuditRepository
+import guardadoc.adapters.persistence.PostgresCategoryRepository
 import guardadoc.adapters.persistence.PostgresDocumentRepository
 import guardadoc.adapters.persistence.PostgresOtpRepository
 import guardadoc.adapters.persistence.PostgresRetentionRepository
@@ -23,6 +24,7 @@ import guardadoc.auth.AuthService
 import guardadoc.auth.AuthSettings
 import guardadoc.auth.EmailSender
 import guardadoc.auth.RateLimiter
+import guardadoc.documents.CategoryService
 import guardadoc.documents.DocumentService
 import guardadoc.documents.DocumentStorage
 import guardadoc.documents.MalwareScanner
@@ -100,6 +102,7 @@ class GuardaDocApp(
         clock = clock,
     )
     val documentService = DocumentService(documentRepository, storage, audit, clock, scanner)
+    val categoryService = CategoryService(PostgresCategoryRepository(database), documentRepository, clock)
     val shareService = ShareService(PostgresShareRepository(database), documentRepository, storage, audit, clock)
     val accountService = AccountService(users, documentRepository, documentService, audit, clock)
     val maintenanceService = MaintenanceService(
@@ -120,6 +123,7 @@ class GuardaDocApp(
         val app = HttpApi(
             auth = authService,
             documents = documentService,
+            categories = categoryService,
             shares = shareService,
             accounts = accountService,
             settings = HttpSettings(

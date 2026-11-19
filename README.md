@@ -15,6 +15,9 @@ exportado novamente.
 
 - Autenticação por código OTP enviado por e-mail, sem senha.
 - Upload privado, listagem, download e exclusão dos documentos do usuário.
+- Categorias criadas pelo usuário (ex.: Escolar, Faculdade, Trabalho / RH,
+  Casa), com sugestões prontas. Cada documento fica em no máximo uma categoria;
+  excluir a categoria não apaga documentos, apenas os deixa sem categoria.
 - Links de compartilhamento somente leitura, com expiração obrigatória e
   revogação pelo proprietário.
 - PWA responsiva em Vue. O service worker pode armazenar apenas a interface
@@ -30,7 +33,11 @@ exportado novamente.
 - Navegação por abas inferiores, *bottom sheets* para ações e confirmações, e o
   botão "voltar" do celular fecha a camada aberta em vez de sair do app.
 - Envio pela câmera, galeria ou arquivos (vários de uma vez), com progresso;
-  arrastar e soltar no desktop.
+  arrastar e soltar no desktop. Com uma categoria aberta, o envio vai direto
+  para ela.
+- Filtro por categoria numa faixa de *chips* com contagem; mover documento de
+  categoria pelo detalhe; criar, renomear e excluir em "Organizar". A busca
+  também encontra pelo nome da categoria.
 - Compartilhamento pela folha nativa do sistema (Web Share) ou copiar link;
   prazos em *chips* e limite de downloads com *stepper*.
 - Código de acesso em 6 caixas com preenchimento automático e envio ao
@@ -208,9 +215,12 @@ vez, instale o navegador com `npx playwright install chromium`.
 | POST | `/api/auth/logout` | revoga a sessão |
 | DELETE | `/api/me` | exclui a conta, todos os documentos, arquivos e links |
 | GET | `/api/health` | verificação de saúde (dispensa HTTPS) |
-| GET/POST | `/api/documents` | lista / envia (multipart, campo `file`) |
+| GET/POST | `/api/documents` | lista / envia (multipart, campo `file`; `categoryId` opcional) |
 | GET | `/api/documents/{id}/download` | baixa como anexo |
+| PATCH | `/api/documents/{id}` | muda a categoria (`{"categoryId": "<id>"}` ou `null`) |
 | DELETE | `/api/documents/{id}` | exclui documento, revoga links e remove arquivo |
+| GET/POST | `/api/categories` | lista (com `documentCount`) / cria (`{"name"}`, até 40 caracteres, 50 por usuário) |
+| PATCH/DELETE | `/api/categories/{id}` | renomeia / exclui (documentos ficam sem categoria) |
 | GET/POST | `/api/documents/{id}/shares` | lista / cria link (`expiresInMinutes` obrigatório, `downloadLimit` opcional) |
 | DELETE | `/api/shares/{id}` | revoga link |
 | GET | `/s/{token}` | página pública do link (sem recursos externos) |
@@ -312,7 +322,8 @@ Uploads também podem ser recusados com `422` (rejeitado pelo antivírus) ou
 O esquema está implementado em
 `backend/src/main/resources/db/migration/V1__schema_inicial.sql`, com a coluna
 adicional `documentos.arquivo_removido_em` para reprocessar remoções de
-arquivos que falharem. A aplicação deve normalizar e-mails consistentemente. O segredo
+arquivos que falharem. As categorias (`categorias` e `documentos.categoria_id`)
+vêm de `V3__categorias.sql`. A aplicação deve normalizar e-mails consistentemente. O segredo
 HMAC usado nos OTPs deve ficar fora do PostgreSQL. Tokens de sessão e
 compartilhamento são segredos aleatórios; somente seus hashes SHA-256 são
 armazenados.

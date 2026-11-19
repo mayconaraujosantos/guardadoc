@@ -28,6 +28,7 @@ class DocumentService(
         declaredMimeType: String?,
         declaredSize: Long,
         content: InputStream,
+        categoryId: UUID? = null,
     ): Document {
         if (declaredSize > MAX_SIZE_BYTES) throw tooLarge()
 
@@ -68,6 +69,7 @@ class DocumentService(
             mimeType = detected.mimeType,
             sizeBytes = bytes.size.toLong(),
             createdAt = clock.instant(),
+            categoryId = categoryId,
         )
         storage.put(document.storageKey, bytes)
         try {

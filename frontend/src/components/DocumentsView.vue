@@ -1,11 +1,13 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api, fileKind, formatRelative, formatSize, haptic } from '../api.js'
 import { toast } from '../composables/ui.js'
 import BottomSheet from './ui/BottomSheet.vue'
 import Icon from './ui/Icon.vue'
 import DocumentSheet from './DocumentSheet.vue'
 import ShareSheet from './ShareSheet.vue'
+import CategoriesSheet from './CategoriesSheet.vue'
+import { categories, categoryName, loadCategories } from '../composables/categories.js'
 
 const props = defineProps({ initialAction: { type: String, default: '' } })
 const emit = defineEmits(['session-expired'])
@@ -30,12 +32,42 @@ const cameraInput = ref(null)
 const galleryInput = ref(null)
 const fileInput = ref(null)
 
+// Filtro por categoria: 'all', 'none' (sem categoria) ou o id da categoria.
+const filter = ref('all')
+const manageOpen = ref(false)
+const activeCategoryId = computed(() => (filter.value === 'all' || filter.value === 'none' ? null : filter.value))
+const activeCategoryName = computed(() => (activeCategoryId.value ? categoryName(activeCategoryId.value) : ''))
+
+const counts = computed(() => {
+  const result = { none: 0 }
+  for (const d of documents.value) {
+    const key = d.categoryId ?? 'none'
+    result[key] = (result[key] ?? 0) + 1
+  }
+  return result
+})
+
+// Categoria excluída (aqui ou em outro aparelho) volta o filtro para "Todos".
+watch(categories, (list) => {
+  if (activeCategoryId.value && !list.some((c) => c.id === activeCategoryId.value)) filter.value = 'all'
+})
+
+function setFilter(value) {
+  filter.value = value
+  haptic(6)
+}
+
 const uploads = reactive([])
 let uploadId = 0
 
 const filtered = computed(() => {
+  let list = documents.value
+  if (filter.value === 'none') list = list.filter((d) => !d.categoryId)
+  else if (filter.value !== 'all') list = list.filter((d) => d.categoryId === filter.value)
   const q = query.value.trim().toLowerCase()
-  return q ? documents.value.filter((d) => d.name.toLowerCase().includes(q)) : documents.value
+  if (!q) return list
+  // A busca também encontra pelo nome da categoria ("escolar", "rh"...).
+  return list.filter((d) => d.name.toLowerCase().includes(q) || categoryName(d.categoryId).toLowerCase().includes(q))
 })
 const totalSize = computed(() => documents.value.reduce((sum, d) => sum + d.sizeBytes, 0))
 
@@ -48,7 +80,8 @@ async function load({ silent = false } = {}) {
   if (!silent) loading.value = true
   loadError.value = ''
   try {
-    documents.value = await api.listDocuments()
+    const [docs] = await Promise.all([api.listDocuments(), loadCategories()])
+    documents.value = docs
   } catch (e) {
     if (e.status === 401) emit('session-expired')
     else loadError.value = e.message
@@ -94,7 +127,7 @@ async function uploadAll(files) {
     const item = reactive({ id: ++uploadId, name: file.name, progress: 0, status: 'sending' })
     uploads.push(item)
     try {
-      await api.uploadDocument(file, (p) => (item.progress = p))
+      await api.uploadDocument(file, (p) => (item.progress = p), activeCategoryId.value)
       item.status = 'done'
       item.progress = 1
       haptic(12)
@@ -133,6 +166,17 @@ function onDeleted(doc) {
   documents.value = documents.value.filter((d) => d.id !== doc.id)
   detailOpen.value = false
   toast('Documento excluído.', { type: 'success' })
+}
+
+function onMoved(updated) {
+  documents.value = documents.value.map((d) => (d.id === updated.id ? updated : d))
+  selected.value = updated
+  toast(updated.categoryId ? `Movido para ${categoryName(updated.categoryId)}.` : 'Documento sem categoria.', { type: 'success' })
+}
+
+function onCategoryDeleted() {
+  // Os documentos da categoria ficaram sem categoria no servidor.
+  void load({ silent: true })
 }
 
 function openShare() {
@@ -218,6 +262,28 @@ defineExpose({ toggleSearch, reload: () => load({ silent: true }) })
       {{ documents.length }} {{ documents.length === 1 ? 'documento' : 'documentos' }} · {{ formatSize(totalSize) }}
     </p>
 
+    <!-- Categorias -->
+    <nav v-if="!loading && !loadError && (documents.length || categories.length)" class="cat-bar" aria-label="Categorias">
+      <button class="cat-chip" :aria-pressed="filter === 'all'" @click="setFilter('all')">
+        Todos <span class="count">{{ documents.length }}</span>
+      </button>
+      <button
+        v-for="c in categories" :key="c.id" class="cat-chip" :aria-pressed="filter === c.id" @click="setFilter(c.id)"
+      >
+        {{ c.name }} <span class="count">{{ counts[c.id] ?? 0 }}</span>
+      </button>
+      <button
+        v-if="categories.length && (counts.none || filter === 'none')" class="cat-chip"
+        :aria-pressed="filter === 'none'" @click="setFilter('none')"
+      >
+        Sem categoria <span class="count">{{ counts.none }}</span>
+      </button>
+      <button class="cat-chip ghost" data-testid="gerenciar-categorias" @click="manageOpen = true">
+        <Icon :name="categories.length ? 'sliders' : 'plus'" :size="16" />
+        {{ categories.length ? 'Organizar' : 'Criar categorias' }}
+      </button>
+    </nav>
+
     <!-- Carregando -->
     <ul v-if="loading" class="list" aria-busy="true" aria-label="Carregando documentos">
       <li v-for="i in 4" :key="i" class="row skeleton">
@@ -246,14 +312,21 @@ defineExpose({ toggleSearch, reload: () => load({ silent: true }) })
 
     <!-- Lista -->
     <template v-else>
-      <p v-if="filtered.length === 0" class="muted center">Nenhum documento encontrado para "{{ query }}".</p>
+      <p v-if="filtered.length === 0 && query.trim()" class="muted center">Nenhum documento encontrado para "{{ query }}".</p>
+      <div v-else-if="filtered.length === 0" class="empty compact">
+        <div class="empty-art"><Icon name="folder" :size="32" /></div>
+        <h2>{{ filter === 'none' ? 'Todos os documentos têm categoria.' : `Nenhum documento em ${activeCategoryName}.` }}</h2>
+        <button v-if="activeCategoryId" class="btn btn-tonal" @click="addOpen = true">
+          <Icon name="plus" :size="20" /> Adicionar aqui
+        </button>
+      </div>
       <TransitionGroup tag="ul" name="list" class="list">
         <li v-for="doc in filtered" :key="doc.id">
           <button class="row" :aria-label="`Abrir ${doc.name}`" @click="open(doc)">
             <span class="tile" :class="fileKind(doc.mimeType).tone"><Icon :name="fileKind(doc.mimeType).icon" /></span>
             <span class="lines">
               <strong class="doc-name">{{ doc.name }}</strong>
-              <span class="meta">{{ fileKind(doc.mimeType).label }} · {{ formatSize(doc.sizeBytes) }} · {{ formatRelative(doc.createdAt) }}</span>
+              <span class="meta"><span v-if="filter === 'all' && doc.categoryId" class="cat-tag">{{ categoryName(doc.categoryId) }}</span>{{ fileKind(doc.mimeType).label }} · {{ formatSize(doc.sizeBytes) }} · {{ formatRelative(doc.createdAt) }}</span>
             </span>
             <Icon name="more" class="row-end" />
           </button>
@@ -291,6 +364,7 @@ defineExpose({ toggleSearch, reload: () => load({ silent: true }) })
     />
 
     <BottomSheet v-model:open="addOpen" title="Adicionar documento">
+      <p v-if="activeCategoryName" class="save-to"><Icon name="folder" :size="18" /> Será salvo em <strong>{{ activeCategoryName }}</strong></p>
       <div class="action-list">
         <button class="action" @click="pick(cameraInput)">
           <span class="action-icon"><Icon name="camera" /></span>
@@ -308,8 +382,9 @@ defineExpose({ toggleSearch, reload: () => load({ silent: true }) })
     </BottomSheet>
 
     <DocumentSheet
-      v-model:open="detailOpen" :doc="selected" @share="openShare" @deleted="onDeleted" @error="handle"
+      v-model:open="detailOpen" :doc="selected" @share="openShare" @deleted="onDeleted" @moved="onMoved" @error="handle"
     />
+    <CategoriesSheet v-model:open="manageOpen" :counts="counts" @deleted="onCategoryDeleted" @error="handle" />
     <ShareSheet v-model:open="shareOpen" :doc="selected" @error="handle" />
   </div>
 </template>

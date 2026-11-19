@@ -12,6 +12,7 @@ data class Document(
     val mimeType: String,
     val sizeBytes: Long,
     val createdAt: Instant,
+    val categoryId: UUID? = null,
 )
 
 // ---- Portas de saída do módulo de documentos ----
@@ -22,6 +23,12 @@ interface DocumentRepository {
 
     /** Retorna o documento somente se estiver ativo e pertencer ao usuário. */
     fun findActive(id: UUID, ownerId: UUID): Document?
+
+    /**
+     * Define a categoria de um documento ativo do usuário. A categoria (se não
+     * nula) também precisa ser do usuário. Retorna null se algo não pertencer a ele.
+     */
+    fun setCategory(id: UUID, ownerId: UUID, categoryId: UUID?): Document?
 
     /**
      * Em uma única transação: marca o documento como excluído e revoga todos os

@@ -135,6 +135,9 @@ class ApiClient(private val t: TestApp) {
             "application/json", headers, withCsrf,
         )
 
+    fun patchJson(path: String, payload: Any) =
+        request("PATCH", path, HttpRequest.BodyPublishers.ofString(json.writeValueAsString(payload)), "application/json")
+
     fun get(path: String) = request("GET", path)
     fun delete(path: String, withCsrf: Boolean = true) = request("DELETE", path, withCsrf = withCsrf)
 
@@ -148,9 +151,18 @@ class ApiClient(private val t: TestApp) {
         csrf = json(response)["csrfToken"].asText()
     }
 
-    fun upload(fileName: String, mime: String, content: ByteArray, withCsrf: Boolean = true): HttpResponse<ByteArray> {
+    fun upload(
+        fileName: String,
+        mime: String,
+        content: ByteArray,
+        withCsrf: Boolean = true,
+        categoryId: String? = null,
+    ): HttpResponse<ByteArray> {
         val boundary = "----guardadoc" + UUID.randomUUID()
-        val head = "--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"$fileName\"\r\n" +
+        val field = categoryId?.let {
+            "--$boundary\r\nContent-Disposition: form-data; name=\"categoryId\"\r\n\r\n$it\r\n"
+        } ?: ""
+        val head = field + "--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"$fileName\"\r\n" +
             "Content-Type: $mime\r\n\r\n"
         val tail = "\r\n--$boundary--\r\n"
         val payload = head.toByteArray() + content + tail.toByteArray()
