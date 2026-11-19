@@ -4,9 +4,11 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import guardadoc.account.AccountService
 import guardadoc.adapters.email.DevOutboxEmailSender
 import guardadoc.auth.AuthService
 import guardadoc.auth.SessionPrincipal
+import guardadoc.documents.CategoryService
 import guardadoc.documents.DocumentService
 import guardadoc.shared.AppException
 import guardadoc.shared.Crypto
@@ -23,12 +25,16 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Clock
 import java.time.Duration
+import java.util.UUID
 
 data class HttpSettings(
     val publicBaseUrl: String,
     val allowedOrigins: Set<String>,
     val cookieSecure: Boolean,
     val csrfSecret: ByteArray,
+    val previousCsrfSecrets: List<ByteArray> = emptyList(),
+    /** Recusa requisições que não chegaram por HTTPS (exceto /api/health). */
+    val requireHttps: Boolean = false,
     val trustProxy: Boolean,
     val staticDir: Path?,
     /** Habilita /dev/outbox. Nunca usar em produção. */
@@ -39,7 +45,9 @@ data class HttpSettings(
 class HttpApi(
     private val auth: AuthService,
     private val documents: DocumentService,
+    private val categories: CategoryService,
     private val shares: ShareService,
+    private val accounts: AccountService,
     private val settings: HttpSettings,
     private val clock: Clock,
 ) {
@@ -68,6 +76,7 @@ class HttpApi(
     // ------------------------------------------------------------------ filtros
 
     private fun registerFilters(config: JavalinConfig) {
+        if (settings.requireHttps) config.routes.before(::enforceHttps)
         config.routes.before { ctx ->
             ctx.header("X-Content-Type-Options", "nosniff")
             ctx.header("Referrer-Policy", "no-referrer")
@@ -101,8 +110,10 @@ class HttpApi(
                 }
                 if (principal != null) {
                     val provided = ctx.header(CSRF_HEADER) ?: throw AppException.Forbidden("Token CSRF ausente")
-                    val expected = csrfToken(principal)
-                    if (!Crypto.constantTimeEquals(provided.toByteArray(), expected.toByteArray())) {
+                    val valid = (listOf(settings.csrfSecret) + settings.previousCsrfSecrets).any { secret ->
+                        Crypto.constantTimeEquals(provided.toByteArray(), csrfToken(principal, secret).toByteArray())
+                    }
+                    if (!valid) {
                         throw AppException.Forbidden("Token CSRF inválido")
                     }
                 }
@@ -140,6 +151,12 @@ class HttpApi(
             ctx.json(MeResponse(principal.email, csrfToken(principal), principal.expiresAt))
         }
 
+        r.delete("/api/me") { ctx ->
+            accounts.deleteAccount(ctx.requirePrincipal().userId)
+            setSessionCookie(ctx, "", Duration.ZERO)
+            ctx.status(HttpStatus.NO_CONTENT)
+        }
+
         // --- Documentos
         r.get("/api/documents") { ctx ->
             ctx.json(documents.list(ctx.requirePrincipal().userId).map(DocumentResponse::of))
@@ -155,20 +172,52 @@ class HttpApi(
             } catch (e: Exception) {
                 throw AppException.PayloadTooLarge("Arquivo excede o limite de 10 MiB")
             } ?: throw AppException.Invalid("Envie o arquivo no campo 'file'")
+            val categoryId = ctx.formParam("categoryId")?.takeIf { it.isNotBlank() }?.let {
+                runCatching { UUID.fromString(it) }.getOrElse { throw AppException.Invalid("Categoria inválida") }
+            }
+            // Antes de ler/verificar o arquivo: categoria precisa ser do usuário.
+            categories.requireOwned(principal.userId, categoryId)
             val document = documents.upload(
                 ownerId = principal.userId,
                 clientFileName = file.filename(),
                 declaredMimeType = file.contentType(),
                 declaredSize = file.size(),
                 content = file.content(),
+                categoryId = categoryId,
             )
             ctx.status(HttpStatus.CREATED).json(DocumentResponse.of(document))
         }
         r.get("/api/documents/{id}/download") { ctx ->
             ctx.sendAttachment(documents.download(ctx.requirePrincipal().userId, ctx.uuidParam("id")))
         }
+        r.patch("/api/documents/{id}") { ctx ->
+            val body = ctx.parseBody<UpdateDocumentBody>()
+            val document = categories.assign(ctx.requirePrincipal().userId, ctx.uuidParam("id"), body.categoryId)
+            ctx.json(DocumentResponse.of(document))
+        }
         r.delete("/api/documents/{id}") { ctx ->
             documents.delete(ctx.requirePrincipal().userId, ctx.uuidParam("id"))
+            ctx.status(HttpStatus.NO_CONTENT)
+        }
+
+        // --- Categorias
+        r.get("/api/categories") { ctx ->
+            ctx.json(categories.list(ctx.requirePrincipal().userId).map(CategoryResponse::of))
+        }
+        r.post("/api/categories") { ctx ->
+            val principal = ctx.requirePrincipal()
+            val created = categories.create(principal.userId, ctx.parseBody<CategoryBody>().name.orEmpty())
+            ctx.status(HttpStatus.CREATED).json(CategoryResponse.of(created))
+        }
+        r.patch("/api/categories/{id}") { ctx ->
+            val principal = ctx.requirePrincipal()
+            val id = ctx.uuidParam("id")
+            val renamed = categories.rename(principal.userId, id, ctx.parseBody<CategoryBody>().name.orEmpty())
+            val count = categories.list(principal.userId).firstOrNull { it.category.id == id }?.documentCount ?: 0
+            ctx.json(CategoryResponse.of(renamed, count))
+        }
+        r.delete("/api/categories/{id}") { ctx ->
+            categories.delete(ctx.requirePrincipal().userId, ctx.uuidParam("id"))
             ctx.status(HttpStatus.NO_CONTENT)
         }
 
@@ -235,6 +284,8 @@ class HttpApi(
                 is AppException.TooManyRequests -> HttpStatus.TOO_MANY_REQUESTS
                 is AppException.PayloadTooLarge -> HttpStatus.CONTENT_TOO_LARGE
                 is AppException.UnsupportedMedia -> HttpStatus.UNSUPPORTED_MEDIA_TYPE
+                is AppException.Rejected -> HttpStatus.UNPROCESSABLE_CONTENT
+                is AppException.Unavailable -> HttpStatus.SERVICE_UNAVAILABLE
             }
             ctx.status(status).json(ErrorResponse(e.message ?: status.message))
         }
@@ -265,8 +316,31 @@ class HttpApi(
 
     // ---------------------------------------------------------------- helpers
 
-    private fun csrfToken(principal: SessionPrincipal): String =
-        Crypto.base64Url(Crypto.hmacSha256(settings.csrfSecret, principal.sessionId.toString()))
+    private fun csrfToken(principal: SessionPrincipal, secret: ByteArray = settings.csrfSecret): String =
+        Crypto.base64Url(Crypto.hmacSha256(secret, principal.sessionId.toString()))
+
+    /**
+     * HTTPS obrigatório. Atrás de proxy TLS, usa X-Forwarded-Proto (somente com
+     * TRUST_PROXY=true). Navegações GET são redirecionadas para PUBLIC_BASE_URL
+     * (nunca para o Host recebido, evitando open redirect); o resto é recusado.
+     */
+    private fun enforceHttps(ctx: Context) {
+        if (ctx.path() == "/api/health") return
+        val scheme = if (settings.trustProxy) {
+            ctx.header("X-Forwarded-Proto")?.substringBefore(',')?.trim()?.lowercase() ?: ctx.scheme()
+        } else {
+            ctx.scheme()
+        }
+        if (scheme == "https") return
+        val base = settings.publicBaseUrl.trimEnd('/')
+        if (ctx.method().name in SAFE_METHODS && base.startsWith("https://")) {
+            val query = ctx.queryString()?.let { "?$it" } ?: ""
+            ctx.redirect(base + ctx.path() + query, HttpStatus.PERMANENT_REDIRECT)
+            ctx.skipRemainingHandlers()
+            return
+        }
+        throw AppException.Forbidden("HTTPS obrigatório")
+    }
 
     private fun setSessionCookie(ctx: Context, token: String, maxAge: Duration) {
         val secure = if (settings.cookieSecure) "; Secure" else ""

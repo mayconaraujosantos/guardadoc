@@ -18,6 +18,10 @@ services:
 
   app:
     build: .
+    # SMTP_* e outras variáveis locais (opcional; ver .env.example).
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       db:
         condition: service_healthy

@@ -25,6 +25,9 @@ data class SessionPrincipal(val sessionId: UUID, val userId: UUID, val email: St
 
 interface UserRepository {
     fun findOrCreate(email: String): User
+
+    /** Remove o usuário e, em cascata, sessões, documentos, links e desafios OTP. */
+    fun delete(userId: UUID)
 }
 
 interface OtpRepository {
@@ -51,6 +54,12 @@ interface SessionRepository {
 interface EmailSender {
     fun sendOtp(to: String, code: String)
 }
+
+/**
+ * Falha de envio com mensagem segura para log: os adaptadores nunca incluem
+ * senha, código OTP nem o endereço do destinatário.
+ */
+class EmailDeliveryException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 
 interface RateLimiter {
     /** Retorna false quando a chave excedeu o limite da janela. */

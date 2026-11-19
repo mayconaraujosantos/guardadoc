@@ -65,7 +65,12 @@ class ShareService(
     fun download(token: String): OpenedDocument {
         if (!TOKEN_FORMAT.matches(token)) throw AppException.NotFound()
         val shared = shares.consumeDownload(Crypto.sha256(token), clock.instant()) ?: throw AppException.NotFound()
-        val content = storage.open(shared.document.storageKey)
+        val content = try {
+            storage.open(shared.document.storageKey)
+        } catch (e: Exception) {
+            shares.releaseDownload(shared.link.id) // não gasta o download se a leitura falhar
+            throw e
+        }
         audit.record(AuditEvent(AuditEventType.LINK_ACESSADO, documentId = shared.document.id, linkId = shared.link.id))
         return OpenedDocument(shared.document, content)
     }

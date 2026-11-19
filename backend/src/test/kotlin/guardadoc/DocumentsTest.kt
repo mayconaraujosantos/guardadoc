@@ -39,7 +39,7 @@ class DocumentsTest {
     @Test
     fun `rejeita arquivo acima de 10 MiB`() {
         val c = t.login("bia@example.com")
-        val big = Samples.pdf + ByteArray(10 * 1024 * 1024)
+        val big = Samples.pdfOfSize(10 * 1024 * 1024 + 1)
         assertEquals(413, c.upload("grande.pdf", "application/pdf", big).statusCode())
         assertEquals(0, t.storedFileCount())
     }
@@ -47,7 +47,7 @@ class DocumentsTest {
     @Test
     fun `aceita arquivo com exatamente 10 MiB`() {
         val c = t.login("bia2@example.com")
-        val exact = Samples.pdf + ByteArray(10 * 1024 * 1024 - Samples.pdf.size)
+        val exact = Samples.pdfOfSize(10 * 1024 * 1024)
         assertEquals(201, c.upload("limite.pdf", "application/pdf", exact).statusCode())
     }
 

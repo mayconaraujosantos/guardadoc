@@ -12,6 +12,8 @@ import java.time.Instant
 
 data class AuthSettings(
     val otpHmacSecret: ByteArray,
+    /** Segredos anteriores aceitos na verificação durante uma rotação. */
+    val previousOtpHmacSecrets: List<ByteArray> = emptyList(),
     val otpTtl: Duration = Duration.ofMinutes(5),
     val otpMaxAttempts: Int = 5,
     val sessionTtl: Duration = Duration.ofHours(12),
@@ -60,8 +62,9 @@ class AuthService(
         try {
             email.sendOtp(normalized, code)
         } catch (e: Exception) {
-            // Não propaga detalhes (nem o código) para o cliente ou para os logs.
-            log.error("Falha ao enviar e-mail de OTP: {}", e.javaClass.simpleName)
+            // Não propaga detalhes ao cliente. No log, só o diagnóstico do adaptador.
+            val reason = if (e is EmailDeliveryException) e.message else e.javaClass.simpleName
+            log.error("Falha ao enviar e-mail de OTP: {}", reason)
         }
         audit.record(AuditEvent(AuditEventType.OTP_SOLICITADO))
     }
@@ -75,7 +78,9 @@ class AuthService(
 
         val now = clock.instant()
         val challenge = otps.registerAttempt(normalized, now) ?: throw invalidCode()
-        val matches = Crypto.constantTimeEquals(challenge.digest, digest(normalized, code))
+        val matches = (listOf(settings.otpHmacSecret) + settings.previousOtpHmacSecrets).any { secret ->
+            Crypto.constantTimeEquals(challenge.digest, digest(normalized, code, secret))
+        }
         if (!matches || !otps.consume(challenge.id, now)) {
             audit.record(AuditEvent(AuditEventType.LOGIN_FALHA))
             throw invalidCode()
@@ -100,7 +105,8 @@ class AuthService(
         principal?.let { audit.record(AuditEvent(AuditEventType.LOGOUT, userId = it.userId)) }
     }
 
-    private fun digest(email: String, code: String) = Crypto.hmacSha256(settings.otpHmacSecret, "$email:$code")
+    private fun digest(email: String, code: String, secret: ByteArray = settings.otpHmacSecret) =
+        Crypto.hmacSha256(secret, "$email:$code")
 
     private fun invalidCode() = AppException.Unauthorized("Código inválido ou expirado")
 

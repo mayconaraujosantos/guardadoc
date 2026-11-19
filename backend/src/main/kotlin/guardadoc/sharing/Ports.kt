@@ -34,4 +34,7 @@ interface ShareRepository {
      * continuar válido. Retorna null se a operação não for permitida.
      */
     fun consumeDownload(tokenHash: ByteArray, now: Instant): SharedDocument?
+
+    /** Compensa um download consumido cujo arquivo não pôde ser lido. */
+    fun releaseDownload(linkId: UUID)
 }
