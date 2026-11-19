@@ -11,6 +11,17 @@ export class ApiError extends Error {
 
 const OFFLINE_MESSAGE = 'Sem conexão. Verifique sua internet e tente novamente.'
 
+function logApiFailure(method, path, details) {
+  console.error('[GuardaDoc] Falha na API', {
+    method,
+    path,
+    origin: window.location.origin,
+    page: window.location.pathname,
+    userAgent: navigator.userAgent,
+    ...details,
+  })
+}
+
 async function request(method, path, { json, body } = {}) {
   const headers = {}
   if (json !== undefined) headers['Content-Type'] = 'application/json'
@@ -24,12 +35,22 @@ async function request(method, path, { json, body } = {}) {
       credentials: 'same-origin',
       cache: 'no-store',
     })
-  } catch {
+  } catch (cause) {
+    logApiFailure(method, path, {
+      phase: 'network',
+      errorName: cause instanceof Error ? cause.name : 'UnknownError',
+    })
     throw new ApiError(0, OFFLINE_MESSAGE)
   }
   if (response.status === 204) return null
   const data = await response.json().catch(() => null)
-  if (!response.ok) throw new ApiError(response.status, data?.error ?? messageFor(response.status))
+  if (!response.ok) {
+    const message = data?.error ?? messageFor(response.status)
+    if (!(path === '/api/me' && response.status === 401)) {
+      logApiFailure(method, path, { phase: 'response', status: response.status, message })
+    }
+    throw new ApiError(response.status, message)
+  }
   return data
 }
 
