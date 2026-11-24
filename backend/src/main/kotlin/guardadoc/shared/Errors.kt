@@ -10,4 +10,8 @@ sealed class AppException(message: String) : RuntimeException(message) {
     class TooManyRequests(message: String = "Muitas requisições; tente novamente mais tarde") : AppException(message)
     class PayloadTooLarge(message: String) : AppException(message)
     class UnsupportedMedia(message: String) : AppException(message)
+    /** Conteúdo bem formado, mas recusado (ex.: malware detectado). */
+    class Rejected(message: String) : AppException(message)
+    /** Dependência obrigatória indisponível (ex.: antivírus); falha fechada. */
+    class Unavailable(message: String) : AppException(message)
 }

@@ -18,6 +18,10 @@ services:
 
   app:
     build: .
+    # SMTP_* e outras variáveis locais (opcional; ver .env.example).
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       db:
         condition: service_healthy
@@ -27,8 +31,10 @@ services:
       DATABASE_URL: jdbc:postgresql://db:5432/guardadoc
       DATABASE_USER: guardadoc
       DATABASE_PASSWORD: guardadoc
-      PUBLIC_BASE_URL: http://localhost:7070
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:7070}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:7070,http://localhost:5173,http://192.168.1.2:7070}
       COOKIE_SECURE: "false" # somente HTTP local
+      REQUIRE_HTTPS: "false"
     ports:
       - "7070:7070"
     volumes:

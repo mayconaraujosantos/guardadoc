@@ -16,11 +16,11 @@ fun main() {
     env.putIfAbsent("COOKIE_SECURE", "false")
 
     val database = if (env["DATABASE_URL"].isNullOrBlank()) {
-        val dataDir = Path.of("./data/pg").toAbsolutePath()
+        val dataDir = Path.of(env["DEV_PG_DIR"] ?: "./data/pg").toAbsolutePath()
         Files.createDirectories(dataDir)
         val postgres = EmbeddedPostgres.builder()
             .setDataDirectory(dataDir)
-            .setCleanDataDirectory(false)
+            .setCleanDataDirectory(env["DEV_PG_CLEAN"] == "true")
             .setPort(env["DEV_PG_PORT"]?.toInt() ?: 54329)
             .start()
         Runtime.getRuntime().addShutdownHook(Thread { postgres.close() })

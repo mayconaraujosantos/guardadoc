@@ -8,7 +8,9 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import guardadoc.adapters.email.DevOutboxEmailSender
 import guardadoc.adapters.persistence.Database
 import guardadoc.adapters.storage.LocalFileSystemStorage
+import guardadoc.auth.EmailSender
 import guardadoc.documents.DocumentStorage
+import guardadoc.documents.MalwareScanner
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
 import org.slf4j.LoggerFactory
 import java.io.InputStream
@@ -27,7 +29,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 
-class MutableClock(@Volatile var now: Instant = Instant.parse("2026-01-01T12:00:00Z")) : Clock() {
+class MutableClock(@Volatile var now: Instant = Instant.now()) : Clock() {
     override fun getZone(): ZoneId = ZoneOffset.UTC
     override fun withZone(zone: ZoneId?): Clock = this
     override fun instant(): Instant = now
@@ -38,7 +40,12 @@ class MutableClock(@Volatile var now: Instant = Instant.parse("2026-01-01T12:00:
 class SpyStorage(private val delegate: DocumentStorage) : DocumentStorage by delegate {
     val opens = AtomicInteger()
     @Volatile var failDeletes = false
-    override fun open(key: String): InputStream { opens.incrementAndGet(); return delegate.open(key) }
+    @Volatile var failOpens = false
+    override fun open(key: String): InputStream {
+        opens.incrementAndGet()
+        if (failOpens) error("falha simulada na leitura")
+        return delegate.open(key)
+    }
     override fun delete(key: String) {
         if (failDeletes) error("falha simulada no armazenamento")
         delegate.delete(key)
@@ -56,19 +63,33 @@ object EmbeddedDb {
     }
 }
 
-class TestApp : AutoCloseable {
-    val clock = MutableClock()
+class TestApp(
+    env: Map<String, String> = emptyMap(),
+    val database: Database = EmbeddedDb.fresh(),
+    val clock: MutableClock = MutableClock(),
+    val storageDir: Path = Files.createTempDirectory("guardadoc-test"),
+    baseStorage: DocumentStorage? = null,
+    scanner: MalwareScanner? = null,
+    emailOverride: EmailSender? = null,
+) : AutoCloseable {
     val outbox = DevOutboxEmailSender()
-    private val storageDir: Path = Files.createTempDirectory("guardadoc-test")
-    val storage = SpyStorage(LocalFileSystemStorage(storageDir))
+    val storage = SpyStorage(baseStorage ?: LocalFileSystemStorage(storageDir))
     val app = GuardaDocApp(
-        config = AppConfig.fromEnv(mapOf("APP_ENV" to "dev", "COOKIE_SECURE" to "false", "STATIC_DIR" to "/nonexistent")),
-        database = EmbeddedDb.fresh(),
+        config = AppConfig.fromEnv(
+            mapOf(
+                "APP_ENV" to "dev",
+                "APP_SECRET" to "segredo-de-teste-com-pelo-menos-32-caracteres",
+                "COOKIE_SECURE" to "false",
+                "STATIC_DIR" to "/nonexistent",
+            ) + env,
+        ),
+        database = database,
         clock = clock,
-        emailOverride = outbox,
+        emailOverride = emailOverride ?: outbox,
         storageOverride = storage,
+        scannerOverride = scanner,
     )
-    val port = app.start(0).port()
+    val port = app.start(0, scheduleJobs = false).port()
     val base = "http://localhost:$port"
     val http: HttpClient = HttpClient.newHttpClient()
 
@@ -114,6 +135,9 @@ class ApiClient(private val t: TestApp) {
             "application/json", headers, withCsrf,
         )
 
+    fun patchJson(path: String, payload: Any) =
+        request("PATCH", path, HttpRequest.BodyPublishers.ofString(json.writeValueAsString(payload)), "application/json")
+
     fun get(path: String) = request("GET", path)
     fun delete(path: String, withCsrf: Boolean = true) = request("DELETE", path, withCsrf = withCsrf)
 
@@ -127,9 +151,18 @@ class ApiClient(private val t: TestApp) {
         csrf = json(response)["csrfToken"].asText()
     }
 
-    fun upload(fileName: String, mime: String, content: ByteArray, withCsrf: Boolean = true): HttpResponse<ByteArray> {
+    fun upload(
+        fileName: String,
+        mime: String,
+        content: ByteArray,
+        withCsrf: Boolean = true,
+        categoryId: String? = null,
+    ): HttpResponse<ByteArray> {
         val boundary = "----guardadoc" + UUID.randomUUID()
-        val head = "--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"$fileName\"\r\n" +
+        val field = categoryId?.let {
+            "--$boundary\r\nContent-Disposition: form-data; name=\"categoryId\"\r\n\r\n$it\r\n"
+        } ?: ""
+        val head = field + "--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"$fileName\"\r\n" +
             "Content-Type: $mime\r\n\r\n"
         val tail = "\r\n--$boundary--\r\n"
         val payload = head.toByteArray() + content + tail.toByteArray()
@@ -144,8 +177,22 @@ class ApiClient(private val t: TestApp) {
 
 object Samples {
     val pdf = "%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << >>\n%%EOF\n".toByteArray()
-    val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(64) { it.toByte() }
-    val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte()) + ByteArray(64) { 7 }
+    val png = image("png")
+    val jpeg = image("jpeg")
+
+    /** PDF válido com exatamente [size] bytes. */
+    fun pdfOfSize(size: Int): ByteArray {
+        val head = "%PDF-1.4\n".toByteArray()
+        val tail = "\n%%EOF\n".toByteArray()
+        return head + ByteArray(size - head.size - tail.size) { ' '.code.toByte() } + tail
+    }
+
+    private fun image(format: String): ByteArray {
+        val img = java.awt.image.BufferedImage(8, 8, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val out = java.io.ByteArrayOutputStream()
+        check(javax.imageio.ImageIO.write(img, format, out))
+        return out.toByteArray()
+    }
 }
 
 /** Captura tudo que é logado durante o teste. */

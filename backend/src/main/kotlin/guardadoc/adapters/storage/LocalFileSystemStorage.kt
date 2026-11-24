@@ -1,6 +1,7 @@
 package guardadoc.adapters.storage
 
 import guardadoc.documents.DocumentStorage
+import guardadoc.documents.StoredObject
 import java.io.InputStream
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -45,6 +46,17 @@ class LocalFileSystemStorage(baseDir: Path) : DocumentStorage {
     }
 
     override fun exists(key: String): Boolean = Files.exists(resolve(key))
+
+    override fun listObjects(): Sequence<StoredObject> = sequence {
+        Files.walk(root).use { paths ->
+            for (path in paths.iterator()) {
+                val name = path.fileName?.toString() ?: continue
+                if (Files.isRegularFile(path) && KEY_FORMAT.matches(name)) {
+                    yield(StoredObject(name, Files.getLastModifiedTime(path).toInstant()))
+                }
+            }
+        }
+    }
 
     /** Chaves são geradas pelo servidor; ainda assim, nunca aceitar caminhos. */
     private fun resolve(key: String): Path {

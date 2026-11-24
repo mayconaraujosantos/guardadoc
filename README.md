@@ -15,12 +15,37 @@ exportado novamente.
 
 - Autenticação por código OTP enviado por e-mail, sem senha.
 - Upload privado, listagem, download e exclusão dos documentos do usuário.
+- Categorias criadas pelo usuário (ex.: Escolar, Faculdade, Trabalho / RH,
+  Casa), com sugestões prontas. Cada documento fica em no máximo uma categoria;
+  excluir a categoria não apaga documentos, apenas os deixa sem categoria.
 - Links de compartilhamento somente leitura, com expiração obrigatória e
   revogação pelo proprietário.
 - PWA responsiva em Vue. O service worker pode armazenar apenas a interface
   estática; não pode armazenar documentos, respostas autenticadas da API ou
   tokens.
-- Monólito modular com portas e adaptadores.
+- Monólito modular com portas e adaptadores e camada explícita de casos de uso
+  (detalhes em `docs/arquitetura.md`).
+
+### Experiência no celular (PWA)
+
+- Instalável (Android/Chrome com convite próprio; iPhone com instrução para
+  "Adicionar à Tela de Início"), abre em tela cheia, ícone *maskable* e atalhos
+  no ícone ("Tirar foto", "Enviar").
+- Navegação por abas inferiores, *bottom sheets* para ações e confirmações, e o
+  botão "voltar" do celular fecha a camada aberta em vez de sair do app.
+- Envio pela câmera, galeria ou arquivos (vários de uma vez), com progresso;
+  arrastar e soltar no desktop. Com uma categoria aberta, o envio vai direto
+  para ela.
+- Filtro por categoria numa faixa de *chips* com contagem; mover documento de
+  categoria pelo detalhe; criar, renomear e excluir em "Organizar". A busca
+  também encontra pelo nome da categoria.
+- Compartilhamento pela folha nativa do sistema (Web Share) ou copiar link;
+  prazos em *chips* e limite de downloads com *stepper*.
+- Código de acesso em 6 caixas com preenchimento automático e envio ao
+  completar; atalho para abrir o webmail.
+- Puxar para atualizar, busca, *skeleton* de carregamento, toasts, aviso de
+  offline, vibração leve, modo escuro e áreas seguras (notch/barra de gestos).
+- Prévia de imagens apenas em memória (nunca em cache ou armazenamento).
 
 Fora do escopo da primeira POC: acesso offline aos documentos, armazenamento
 público, criptografia ponta a ponta, links protegidos por senha e alegações de
@@ -35,9 +60,10 @@ conformidade legal ou com a LGPD.
   `backend/build.gradle.kts` (o plugin foojay baixa o JDK automaticamente) e a
   imagem do `Dockerfile`.
 - Banco de dados: PostgreSQL (migrações com Flyway, acesso via JDBC/HikariCP).
-- Arquivos: armazenamento privado em disco local (`LocalFileSystemStorage`),
-  acessado somente pelo backend; trocável por um bucket privado implementando a
-  porta `DocumentStorage`.
+- Arquivos: armazenamento privado acessado somente pelo backend — disco local
+  (`LocalFileSystemStorage`) ou bucket S3/compatível privado com SSE
+  (`S3DocumentStorage`, `STORAGE_BACKEND=s3`).
+- Antivírus: ClamAV via protocolo `INSTREAM` (`CLAMAV_HOST`), opcional.
 - E-mail: SMTP (`SmtpEmailSender`) ou, em desenvolvimento, outbox em memória
   consultável em `/dev/outbox`.
 - Implantação: frontend e API servidos no mesmo site pelo backend (sem CORS).
@@ -48,27 +74,68 @@ conformidade legal ou com a LGPD.
 ```text
 backend/
   src/main/kotlin/guardadoc/
-    auth/        núcleo: RequestOtp, VerifyOtp/CreateSession + portas
-    documents/   núcleo: Upload, List, Download, Delete + portas
-    sharing/     núcleo: CreateShareLink, AccessSharedDocument, RevokeShareLink
-    shared/      criptografia, erros de aplicação, porta de auditoria
+    auth/ documents/ sharing/ maintenance/ shared/
+                   domínio: entidades, regras puras e portas
+    application/   casos de uso explícitos (um comando por operação) e portas
+                   consumidas por account/maintenance/sharing
     adapters/
-      http/         adaptador de entrada (Javalin): rotas, CSRF, cabeçalhos
+      http/         adaptador de entrada (Javalin): filtros, CSRF, cabeçalhos
+        routes/     um registrador de rotas por área
       persistence/  adaptadores PostgreSQL de todas as portas de repositório
-      storage/      armazenamento privado de arquivos
+      storage/      armazenamento privado: disco local ou S3
+      scan/         antivírus ClamAV
       email/        SMTP e outbox de desenvolvimento
-      ratelimit/    limitador em memória
+      ratelimit/    limitador em PostgreSQL (multi-instância) ou em memória
     GuardaDocApp.kt  composition root (liga portas a adaptadores)
+    AppConfig.kt     configuração por variáveis de ambiente
   src/main/resources/db/migration/   migrações Flyway
   src/dev/kotlin/    DevMain: PostgreSQL embarcado para desenvolvimento
-  src/test/kotlin/   testes de integração (PostgreSQL embarcado, HTTP real)
-frontend/            PWA Vue/Vite
-docs/                artefatos de arquitetura e fluxos de dados
+  src/test/kotlin/   integração (PostgreSQL embarcado, HTTP real) + testes de casos de uso
+frontend/            PWA Vue/Vite (e2e/: testes Playwright)
+docs/                artefatos de arquitetura, fluxos e `arquitetura.md`
+docs/politicas/      segredos e chaves; retenção e exclusão
+.github/workflows/   CI: testes do backend, E2E e build da imagem
 ```
 
 ## Como executar
 
 Pré-requisitos: JDK 21 e Node 20+. Docker é opcional.
+
+### Atalhos com `make`
+
+```bash
+make install          # dependências do frontend + Chromium do Playwright
+make dev              # build do PWA + API em http://localhost:7070 (OTPs em /dev/outbox)
+make dev-frontend     # Vite com hot reload em :5173 (com `make dev` em outro terminal)
+make test             # testes do backend + E2E
+make test-e2e         # só E2E; filtre com E2E_ARGS="-g 'logout'"
+make test-e2e-headed  # E2E com navegador visível (ou test-e2e-ui para o modo interativo)
+make docker-up-full   # Docker com S3 local e ClamAV
+make email-test TO=voce@exemplo.com  # testa o envio SMTP configurado no .env
+make help             # lista todos os alvos
+```
+
+Os comandos equivalentes, sem `make`, estão abaixo.
+
+### Envio de e-mails (Gmail)
+
+Sem `SMTP_HOST`, o modo dev não envia e-mails: os códigos ficam em
+`/dev/outbox`. Para receber os códigos de verdade pelo Gmail:
+
+1. Na conta Google, ative a verificação em duas etapas e crie uma
+   [senha de app](https://myaccount.google.com/apppasswords). A senha normal da
+   conta não funciona por SMTP.
+2. `cp .env.example .env` e preencha `SMTP_USERNAME`, `SMTP_PASSWORD` (entre
+   aspas; os espaços da senha de app são ignorados) e, se quiser, `SMTP_FROM`.
+   O `.env` é ignorado pelo git.
+3. `make email-test TO=voce@exemplo.com`. Em caso de falha, a mensagem diz a
+   causa: autenticação, conexão, TLS ou remetente recusado.
+4. `make dev` (ou `make docker-up`) passa a enviar os códigos por e-mail, e o
+   `/dev/outbox` fica desativado.
+
+Os testes E2E não leem o `.env` e continuam usando o outbox. O Gmail gratuito
+limita os envios a cerca de 500 por dia; em produção, prefira um serviço
+transacional (SES, Postmark, Mailgun...), configurado com as mesmas variáveis.
 
 ### Desenvolvimento (sem Docker)
 
@@ -92,27 +159,52 @@ Para desenvolver o frontend com hot reload, mantenha `runDev` rodando e execute
 docker compose up --build
 ```
 
+Ambiente mais próximo de produção, com bucket S3 privado local (s3proxy) e
+antivírus ClamAV (a primeira subida do ClamAV leva alguns minutos):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
+```
+
 ### Testes
 
 ```bash
-cd backend && ./gradlew test
+cd backend && ./gradlew test        # integração: PostgreSQL embarcado, S3 em memória, clamd falso
+cd frontend && npm run test:e2e     # E2E (desktop e celular emulado): build do PWA + backend real na porta 7071
 ```
+
+Os testes E2E sobem o próprio backend com um banco embarcado descartável
+(`backend/build/e2e-pg`), sem tocar nos dados de `backend/data/`. Na primeira
+vez, instale o navegador com `npx playwright install chromium`.
 
 ### Variáveis de ambiente
 
 | Variável | Padrão | Descrição |
 |---|---|---|
 | `APP_ENV` | — | `dev` habilita `/dev/outbox` e segredo aleatório |
-| `APP_SECRET` | obrigatório fora de dev | segredo mestre (≥ 32 caracteres); deriva as chaves de OTP e CSRF |
+| `APP_SECRET` | obrigatório fora de dev | segredo mestre (≥ 32 caracteres); deriva as chaves de OTP, CSRF e limitador |
+| `APP_SECRET_PREVIOUS` | — | segredo anterior aceito durante a rotação (ver `docs/politicas/segredos-e-chaves.md`) |
 | `PORT` | `7070` | porta HTTP |
 | `DATABASE_URL` / `DATABASE_USER` / `DATABASE_PASSWORD` | `jdbc:postgresql://localhost:5432/guardadoc`, `guardadoc`, `guardadoc` | PostgreSQL |
 | `PUBLIC_BASE_URL` | `http://localhost:$PORT` | base dos links de compartilhamento |
 | `ALLOWED_ORIGINS` | `PUBLIC_BASE_URL`, `http://localhost:5173` | allowlist de `Origin` para requisições que alteram dados |
 | `COOKIE_SECURE` | `true` (`false` no `runDev`) | atributo `Secure` do cookie de sessão |
-| `TRUST_PROXY` | `false` | usa `X-Forwarded-For` para limitar por IP |
-| `STORAGE_DIR` | `./data/storage` | diretório privado dos arquivos |
+| `REQUIRE_HTTPS` | `true` fora de dev | recusa HTTP puro (exceto `/api/health`); GETs são redirecionados para `PUBLIC_BASE_URL` |
+| `TRUST_PROXY` | `false` | confia em `X-Forwarded-For`/`X-Forwarded-Proto` do proxy TLS |
+| `RATE_LIMIT_STORE` | `postgres` | `postgres` (compartilhado entre instâncias) ou `memory` |
+| `RATE_LIMIT_OTP_PER_IP` | `30` | Pedidos de código por IP a cada 15 min (o E2E usa um valor alto) |
+| `STORAGE_BACKEND` | `local` | `local` (disco) ou `s3` |
+| `STORAGE_DIR` | `./data/storage` | diretório privado dos arquivos (backend `local`) |
+| `S3_BUCKET` | obrigatório com `s3` | bucket privado |
+| `S3_REGION` / `S3_ENDPOINT` / `S3_PATH_STYLE` | `us-east-1` / — / `false` | região; endpoint e path-style para S3 compatível (R2, MinIO, B2...) |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | — | credenciais; se ausentes, usa a cadeia padrão da AWS (IAM) |
+| `S3_SSE` | `true` | criptografia em repouso no servidor (SSE) |
+| `CLAMAV_HOST` / `CLAMAV_PORT` | — / `3310` | antivírus; sem host, uploads não são verificados (aviso no log fora de dev) |
+| `RETENTION_SHARE_LINKS_DAYS` | `90` | retenção de links expirados/revogados |
+| `RETENTION_DELETED_DOCUMENTS_DAYS` | `30` | retenção de metadados de documentos excluídos |
+| `RETENTION_AUDIT_DAYS` | `180` | retenção de eventos de auditoria |
 | `STATIC_DIR` | `../frontend/dist` | build do PWA |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS` | — | envio de e-mail real (obrigatório fora de dev) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS`, `SMTP_SSL` | — / `587` (`465` com SSL) | envio de e-mail real (obrigatório fora de dev). `SMTP_FROM` padrão = `SMTP_USERNAME`; `SMTP_SSL=true` para TLS implícito (porta 465) |
 
 ### API
 
@@ -122,9 +214,14 @@ cd backend && ./gradlew test
 | POST | `/api/auth/otp/verify` | valida código, cria sessão e devolve token CSRF |
 | GET | `/api/me` | sessão atual e token CSRF |
 | POST | `/api/auth/logout` | revoga a sessão |
-| GET/POST | `/api/documents` | lista / envia (multipart, campo `file`) |
+| DELETE | `/api/me` | exclui a conta, todos os documentos, arquivos e links |
+| GET | `/api/health` | verificação de saúde (dispensa HTTPS) |
+| GET/POST | `/api/documents` | lista / envia (multipart, campo `file`; `categoryId` opcional) |
 | GET | `/api/documents/{id}/download` | baixa como anexo |
+| PATCH | `/api/documents/{id}` | muda a categoria (`{"categoryId": "<id>"}` ou `null`) |
 | DELETE | `/api/documents/{id}` | exclui documento, revoga links e remove arquivo |
+| GET/POST | `/api/categories` | lista (com `documentCount`) / cria (`{"name"}`, até 40 caracteres, 50 por usuário) |
+| PATCH/DELETE | `/api/categories/{id}` | renomeia / exclui (documentos ficam sem categoria) |
 | GET/POST | `/api/documents/{id}/shares` | lista / cria link (`expiresInMinutes` obrigatório, `downloadLimit` opcional) |
 | DELETE | `/api/shares/{id}` | revoga link |
 | GET | `/s/{token}` | página pública do link (sem recursos externos) |
@@ -132,13 +229,24 @@ cd backend && ./gradlew test
 
 Requisições autenticadas que alteram dados exigem o cabeçalho `X-CSRF-Token`.
 
+Uploads também podem ser recusados com `422` (rejeitado pelo antivírus) ou
+`503` (antivírus indisponível — nada é armazenado).
+
+### Operação
+
+- **Várias instâncias:** o limitador de requisições fica no PostgreSQL, e as
+  rotinas agendadas (limpeza de arquivos pendentes a cada 5 min; retenção e
+  varredura de órfãos a cada hora) rodam em uma única instância por vez via
+  advisory lock.
+- **Políticas:** `docs/politicas/segredos-e-chaves.md` (inventário e rotação) e
+  `docs/politicas/retencao-e-exclusao.md` (prazos, exclusão, backups).
+
 ### Limitações conhecidas da POC
 
-- Limitador de requisições em memória: adequado a uma única instância.
-- Armazenamento em disco local; em produção usar bucket privado com
-  criptografia em repouso gerenciada pelo provedor.
-- Sem limpeza automática de objetos órfãos gerados por falhas fora do fluxo de
-  upload (o upload já compensa falhas ao gravar metadados).
+- Backups, aviso de privacidade e resposta a incidentes ainda precisam ser
+  definidos (checklist em `docs/politicas/retencao-e-exclusao.md`).
+- Sem antivírus configurado, os uploads passam apenas pela validação de tipo e
+  conteúdo.
 
 ## Requisitos de segurança da POC
 
@@ -215,7 +323,8 @@ Requisições autenticadas que alteram dados exigem o cabeçalho `X-CSRF-Token`.
 O esquema está implementado em
 `backend/src/main/resources/db/migration/V1__schema_inicial.sql`, com a coluna
 adicional `documentos.arquivo_removido_em` para reprocessar remoções de
-arquivos que falharem. A aplicação deve normalizar e-mails consistentemente. O segredo
+arquivos que falharem. As categorias (`categorias` e `documentos.categoria_id`)
+vêm de `V3__categorias.sql`. A aplicação deve normalizar e-mails consistentemente. O segredo
 HMAC usado nos OTPs deve ficar fora do PostgreSQL. Tokens de sessão e
 compartilhamento são segredos aleatórios; somente seus hashes SHA-256 são
 armazenados.
@@ -301,8 +410,8 @@ CREATE INDEX idx_eventos_auditoria_criado ON eventos_auditoria (criado_em);
 
 ## Critérios de aceite da POC
 
-Cobertos por testes de integração em `backend/src/test/kotlin` (exceto o cache
-do PWA, garantido pela configuração do Workbox em `frontend/vite.config.js`):
+Cobertos por testes de integração em `backend/src/test/kotlin` e, para o cache
+do PWA e os fluxos na interface, pelos testes E2E em `frontend/e2e`:
 
 - OTP expira, só pode ser consumido uma vez, é rejeitado após cinco tentativas
   inválidas e está sujeito a limite de requisições, inclusive com tentativas

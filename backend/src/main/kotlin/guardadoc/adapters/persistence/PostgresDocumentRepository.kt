@@ -9,7 +9,7 @@ import java.util.UUID
 internal const val DOCUMENT_COLUMNS =
     "d.id AS d_id, d.usuario_id AS d_usuario_id, d.storage_key AS d_storage_key, " +
         "d.nome_original AS d_nome_original, d.mime_type AS d_mime_type, " +
-        "d.tamanho_bytes AS d_tamanho_bytes, d.criado_em AS d_criado_em"
+        "d.tamanho_bytes AS d_tamanho_bytes, d.criado_em AS d_criado_em, d.categoria_id AS d_categoria_id"
 
 internal fun ResultSet.toDocument() = Document(
     id = uuid("d_id"),
@@ -19,16 +19,17 @@ internal fun ResultSet.toDocument() = Document(
     mimeType = getString("d_mime_type"),
     sizeBytes = getLong("d_tamanho_bytes"),
     createdAt = instant("d_criado_em"),
+    categoryId = uuidOrNull("d_categoria_id"),
 )
 
 class PostgresDocumentRepository(private val db: Database) : DocumentRepository {
     override fun insert(document: Document) {
         db.withConnection { c ->
             c.update(
-                """INSERT INTO documentos (id, usuario_id, storage_key, nome_original, mime_type, tamanho_bytes, criado_em)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO documentos (id, usuario_id, storage_key, nome_original, mime_type, tamanho_bytes, criado_em, categoria_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 document.id, document.ownerId, document.storageKey, document.originalName,
-                document.mimeType, document.sizeBytes, document.createdAt,
+                document.mimeType, document.sizeBytes, document.createdAt, document.categoryId,
             )
         }
     }
@@ -44,6 +45,17 @@ class PostgresDocumentRepository(private val db: Database) : DocumentRepository 
         c.queryOne(
             "SELECT $DOCUMENT_COLUMNS FROM documentos d WHERE d.id = ? AND d.usuario_id = ? AND d.deletado_em IS NULL",
             id, ownerId,
+        ) { it.toDocument() }
+    }
+
+    override fun setCategory(id: UUID, ownerId: UUID, categoryId: UUID?): Document? = db.withConnection { c ->
+        c.queryOne(
+            """UPDATE documentos d SET categoria_id = ?
+               WHERE d.id = ? AND d.usuario_id = ? AND d.deletado_em IS NULL
+                 AND (CAST(? AS uuid) IS NULL
+                      OR EXISTS (SELECT 1 FROM categorias c WHERE c.id = ? AND c.usuario_id = d.usuario_id))
+               RETURNING $DOCUMENT_COLUMNS""",
+            categoryId, id, ownerId, categoryId, categoryId,
         ) { it.toDocument() }
     }
 
@@ -74,5 +86,31 @@ class PostgresDocumentRepository(private val db: Database) : DocumentRepository 
                ORDER BY d.deletado_em LIMIT ?""",
             limit,
         ) { it.toDocument() }
+    }
+
+    override fun knownStorageKeys(keys: Collection<String>): Set<String> {
+        if (keys.isEmpty()) return emptySet()
+        return db.withConnection { c ->
+            c.prepareStatement("SELECT storage_key FROM documentos WHERE storage_key = ANY(?)").use { st ->
+                st.setArray(1, c.createArrayOf("text", keys.toTypedArray()))
+                st.executeQuery().use { rs -> buildSet { while (rs.next()) add(rs.getString(1)) } }
+            }
+        }
+    }
+
+    override fun markAllDeletedAndRevokeLinks(ownerId: UUID, now: Instant): List<Document> = db.transaction { c ->
+        val documents = c.query(
+            """UPDATE documentos d SET deletado_em = ?
+               WHERE d.usuario_id = ? AND d.deletado_em IS NULL
+               RETURNING $DOCUMENT_COLUMNS""",
+            now, ownerId,
+        ) { it.toDocument() }
+        c.update(
+            """UPDATE links_compartilhamento l SET revogado_em = ?
+               FROM documentos d
+               WHERE d.id = l.documento_id AND d.usuario_id = ? AND l.revogado_em IS NULL""",
+            now, ownerId,
+        )
+        documents
     }
 }

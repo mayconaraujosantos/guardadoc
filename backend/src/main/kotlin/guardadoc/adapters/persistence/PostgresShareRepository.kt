@@ -84,4 +84,10 @@ class PostgresShareRepository(private val db: Database) : ShareRepository {
             tokenHash, now,
         ) { SharedDocument(it.toLink(), it.toDocument()) }
     }
+
+    override fun releaseDownload(linkId: UUID) {
+        db.withConnection { c ->
+            c.update("UPDATE links_compartilhamento SET downloads = downloads - 1 WHERE id = ? AND downloads > 0", linkId)
+        }
+    }
 }

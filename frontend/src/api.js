@@ -9,26 +9,117 @@ export class ApiError extends Error {
   }
 }
 
+const OFFLINE_MESSAGE = 'Sem conexão. Verifique sua internet e tente novamente.'
+
+function logApiFailure(method, path, details) {
+  console.error('[GuardaDoc] Falha na API', {
+    method,
+    path,
+    origin: window.location.origin,
+    page: window.location.pathname,
+    userAgent: navigator.userAgent,
+    ...details,
+  })
+}
+
 async function request(method, path, { json, body } = {}) {
   const headers = {}
   if (json !== undefined) headers['Content-Type'] = 'application/json'
   if (csrfToken && method !== 'GET') headers['X-CSRF-Token'] = csrfToken
-  const response = await fetch(path, {
-    method,
-    headers,
-    body: json !== undefined ? JSON.stringify(json) : body,
-    credentials: 'same-origin',
-    cache: 'no-store',
-  })
+  let response
+  try {
+    response = await fetch(path, {
+      method,
+      headers,
+      body: json !== undefined ? JSON.stringify(json) : body,
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
+  } catch (cause) {
+    logApiFailure(method, path, {
+      phase: 'network',
+      errorName: cause instanceof Error ? cause.name : 'UnknownError',
+    })
+    throw new ApiError(0, OFFLINE_MESSAGE)
+  }
   if (response.status === 204) return null
   const data = await response.json().catch(() => null)
-  if (!response.ok) throw new ApiError(response.status, data?.error ?? `Erro ${response.status}`)
+  if (!response.ok) {
+    const message = data?.error ?? messageFor(response.status)
+    if (!(path === '/api/me' && response.status === 401)) {
+      logApiFailure(method, path, { phase: 'response', status: response.status, message })
+    }
+    throw new ApiError(response.status, message)
+  }
   return data
+}
+
+function messageFor(status) {
+  if (status === 413) return 'Arquivo excede o limite de 10 MiB.'
+  if (status === 429) return 'Muitas tentativas. Aguarde alguns minutos.'
+  if (status >= 500) return 'O servidor não respondeu. Tente novamente.'
+  return `Erro ${status}`
 }
 
 function setSession(me) {
   csrfToken = me?.csrfToken ?? null
   return me
+}
+
+function base64Url(buffer) {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function publicKeyOptions(optionsJson) {
+  const parsed = JSON.parse(optionsJson)
+  const publicKey = parsed.publicKey ?? parsed
+  publicKey.challenge = fromBase64Url(publicKey.challenge)
+  if (publicKey.user?.id) publicKey.user.id = fromBase64Url(publicKey.user.id)
+  if (publicKey.allowCredentials) {
+    publicKey.allowCredentials = publicKey.allowCredentials.map((credential) => ({
+      ...credential,
+      id: fromBase64Url(credential.id),
+    }))
+  }
+  if (publicKey.excludeCredentials) {
+    publicKey.excludeCredentials = publicKey.excludeCredentials.map((credential) => ({
+      ...credential,
+      id: fromBase64Url(credential.id),
+    }))
+  }
+  return publicKey
+}
+
+function fromBase64Url(value) {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=')
+  const binary = atob(base64)
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+  return bytes
+}
+
+function serializeCredential(credential) {
+  const response = credential.response
+  return JSON.stringify({
+    id: credential.id,
+    rawId: base64Url(credential.rawId),
+    type: credential.type,
+    response: response.attestationObject
+      ? {
+          attestationObject: base64Url(response.attestationObject),
+          clientDataJSON: base64Url(response.clientDataJSON),
+          transports: response.getTransports?.() ?? [],
+        }
+      : {
+          authenticatorData: base64Url(response.authenticatorData),
+          clientDataJSON: base64Url(response.clientDataJSON),
+          signature: base64Url(response.signature),
+          userHandle: response.userHandle ? base64Url(response.userHandle) : null,
+        },
+    clientExtensionResults: credential.getClientExtensionResults?.() ?? {},
+  })
 }
 
 export const api = {
@@ -44,18 +135,87 @@ export const api = {
   async verifyOtp(email, code) {
     return setSession(await request('POST', '/api/auth/otp/verify', { json: { email, code } }))
   },
+  async loginWithPasskey() {
+    if (!window.PublicKeyCredential || !navigator.credentials) throw new ApiError(0, 'Passkey não suportada neste navegador.')
+    const started = await request('POST', '/api/auth/passkey/options')
+    const credential = await navigator.credentials.get({
+      publicKey: publicKeyOptions(started.options),
+    })
+    if (!credential) throw new ApiError(401, 'Nenhuma Passkey selecionada.')
+    return setSession(await request('POST', '/api/auth/passkey/verify', {
+      json: { challengeId: started.challengeId, credential: serializeCredential(credential) },
+    }))
+  },
+  async registerPasskey() {
+    if (!window.PublicKeyCredential || !navigator.credentials) throw new ApiError(0, 'Passkey não suportada neste navegador.')
+    const started = await request('POST', '/api/passkeys/options')
+    const credential = await navigator.credentials.create({
+      publicKey: publicKeyOptions(started.options),
+    })
+    if (!credential) throw new ApiError(400, 'A criação da Passkey foi cancelada.')
+    await request('POST', '/api/passkeys/register', {
+      json: { challengeId: started.challengeId, credential: serializeCredential(credential) },
+    })
+  },
   async logout() {
     await request('POST', '/api/auth/logout')
     setSession(null)
   },
-  listDocuments: () => request('GET', '/api/documents'),
-  uploadDocument(file) {
-    const form = new FormData()
-    form.append('file', file)
-    return request('POST', '/api/documents', { body: form })
+  async deleteAccount() {
+    await request('DELETE', '/api/me')
+    setSession(null)
   },
+  listDocuments: () => request('GET', '/api/documents'),
+
+  /** Upload com progresso (fetch ainda não expõe progresso de envio). */
+  uploadDocument(file, onProgress, categoryId = null) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', '/api/documents')
+      xhr.withCredentials = true
+      if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken)
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress?.(e.loaded / e.total)
+      }
+      xhr.onload = () => {
+        let data = null
+        try {
+          data = JSON.parse(xhr.responseText)
+        } catch {
+          /* resposta sem JSON */
+        }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data)
+        else reject(new ApiError(xhr.status, data?.error ?? messageFor(xhr.status)))
+      }
+      xhr.onerror = () => reject(new ApiError(0, OFFLINE_MESSAGE))
+      const form = new FormData()
+      if (categoryId) form.append('categoryId', categoryId)
+      form.append('file', file)
+      xhr.send(form)
+    })
+  },
+
+  setDocumentCategory: (id, categoryId) => request('PATCH', `/api/documents/${id}`, { json: { categoryId } }),
   deleteDocument: (id) => request('DELETE', `/api/documents/${id}`),
   downloadUrl: (id) => `/api/documents/${id}/download`,
+
+  /** Conteúdo do documento só em memória (prévia); nunca vai para cache. */
+  async fetchDocumentBlob(id) {
+    let response
+    try {
+      response = await fetch(`/api/documents/${id}/download`, { credentials: 'same-origin', cache: 'no-store' })
+    } catch {
+      throw new ApiError(0, OFFLINE_MESSAGE)
+    }
+    if (!response.ok) throw new ApiError(response.status, messageFor(response.status))
+    return response.blob()
+  },
+
+  listCategories: () => request('GET', '/api/categories'),
+  createCategory: (name) => request('POST', '/api/categories', { json: { name } }),
+  renameCategory: (id, name) => request('PATCH', `/api/categories/${id}`, { json: { name } }),
+  deleteCategory: (id) => request('DELETE', `/api/categories/${id}`),
+
   listShares: (documentId) => request('GET', `/api/documents/${documentId}/shares`),
   createShare: (documentId, expiresInMinutes, downloadLimit) =>
     request('POST', `/api/documents/${documentId}/shares`, {
@@ -65,11 +225,39 @@ export const api = {
 }
 
 export function formatSize(bytes) {
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
   return `${bytes} bytes`
 }
 
 export function formatDate(iso) {
   return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+}
+
+const rtf = new Intl.RelativeTimeFormat('pt-BR', { numeric: 'auto' })
+
+/** "há 5 minutos", "em 3 dias", "ontem"... */
+export function formatRelative(iso, now = Date.now()) {
+  const diff = (new Date(iso).getTime() - now) / 1000
+  const abs = Math.abs(diff)
+  if (abs < 60) return diff < 0 ? 'agora há pouco' : 'em instantes'
+  if (abs < 3600) return rtf.format(Math.round(diff / 60), 'minute')
+  if (abs < 86400) return rtf.format(Math.round(diff / 3600), 'hour')
+  if (abs < 86400 * 30) return rtf.format(Math.round(diff / 86400), 'day')
+  return formatDate(iso)
+}
+
+export function fileKind(mimeType) {
+  if (mimeType === 'application/pdf') return { label: 'PDF', icon: 'file', tone: 'pdf' }
+  if (mimeType?.startsWith('image/')) return { label: mimeType === 'image/png' ? 'PNG' : 'JPEG', icon: 'image', tone: 'img' }
+  return { label: 'Arquivo', icon: 'file', tone: 'other' }
+}
+
+/** Vibração curta de confirmação (quando o aparelho suporta). */
+export function haptic(pattern = 10) {
+  try {
+    navigator.vibrate?.(pattern)
+  } catch {
+    /* sem suporte */
+  }
 }
