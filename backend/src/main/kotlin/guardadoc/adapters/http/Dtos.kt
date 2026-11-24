@@ -9,6 +9,8 @@ import java.util.UUID
 
 data class OtpRequestBody(val email: String? = null)
 data class OtpVerifyBody(val email: String? = null, val code: String? = null)
+data class PasskeyStartResponse(val challengeId: UUID, val options: String)
+data class PasskeyCredentialBody(val challengeId: String? = null, val credential: String? = null)
 data class CategoryBody(val name: String? = null)
 data class UpdateDocumentBody(val categoryId: UUID? = null)
 data class CreateShareBody(val expiresInMinutes: Long? = null, val downloadLimit: Int? = null)

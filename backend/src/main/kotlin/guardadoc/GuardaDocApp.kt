@@ -10,6 +10,7 @@ import guardadoc.adapters.persistence.PostgresAuditRepository
 import guardadoc.adapters.persistence.PostgresCategoryRepository
 import guardadoc.adapters.persistence.PostgresDocumentRepository
 import guardadoc.adapters.persistence.PostgresOtpRepository
+import guardadoc.adapters.persistence.PostgresPasskeyRepository
 import guardadoc.adapters.persistence.PostgresRetentionRepository
 import guardadoc.adapters.persistence.PostgresSessionRepository
 import guardadoc.adapters.persistence.PostgresShareRepository
@@ -22,6 +23,7 @@ import guardadoc.adapters.storage.S3DocumentStorage
 import guardadoc.auth.AuthRateLimits
 import guardadoc.auth.AuthService
 import guardadoc.auth.AuthSettings
+import guardadoc.auth.PasskeyService
 import guardadoc.auth.EmailSender
 import guardadoc.auth.RateLimiter
 import guardadoc.documents.CategoryService
@@ -101,6 +103,16 @@ class GuardaDocApp(
         settings = AuthSettings(otpHmacSecret = config.otpHmacKey, previousOtpHmacSecrets = config.previousOtpHmacKeys),
         clock = clock,
     )
+    val passkeyService = PasskeyService(
+        users = users,
+        passkeys = PostgresPasskeyRepository(database),
+        sessions = PostgresSessionRepository(database),
+        audit = audit,
+        settings = AuthSettings(otpHmacSecret = config.otpHmacKey, previousOtpHmacSecrets = config.previousOtpHmacKeys),
+        publicBaseUrl = config.publicBaseUrl,
+        allowedOrigins = config.allowedOrigins,
+        clock = clock,
+    )
     val documentService = DocumentService(documentRepository, storage, audit, clock, scanner)
     val categoryService = CategoryService(PostgresCategoryRepository(database), documentRepository, clock)
     val shareService = ShareService(PostgresShareRepository(database), documentRepository, storage, audit, clock)
@@ -122,6 +134,7 @@ class GuardaDocApp(
         Database.migrate(database.dataSource)
         val app = HttpApi(
             auth = authService,
+            passkeys = passkeyService,
             documents = documentService,
             categories = categoryService,
             shares = shareService,
@@ -129,6 +142,7 @@ class GuardaDocApp(
             settings = HttpSettings(
                 publicBaseUrl = config.publicBaseUrl,
                 allowedOrigins = config.allowedOrigins,
+                dev = config.dev,
                 cookieSecure = config.cookieSecure,
                 csrfSecret = config.csrfKey,
                 previousCsrfSecrets = config.previousCsrfKeys,

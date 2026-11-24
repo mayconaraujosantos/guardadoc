@@ -12,6 +12,7 @@ const step = ref('email')
 const email = ref('')
 const code = ref('')
 const busy = ref(false)
+const passkeyBusy = ref(false)
 const error = ref('')
 const resendIn = ref(0)
 const codeInput = ref(null)
@@ -71,6 +72,22 @@ async function verify() {
   } finally {
     busy.value = false
   }
+
+  async function loginWithPasskey() {
+    if (passkeyBusy.value) return
+    error.value = ''
+    passkeyBusy.value = true
+    try {
+      const me = await api.loginWithPasskey()
+      haptic(15)
+      emit('authenticated', me)
+    } catch (e) {
+      haptic([30, 40, 30])
+      error.value = e.message
+    } finally {
+      passkeyBusy.value = false
+    }
+  }
 }
 
 function onCodeInput(event) {
@@ -102,6 +119,11 @@ async function changeEmail() {
 
     <section class="login-card">
       <p v-if="props.notice" class="banner success"><Icon name="check" :size="18" />{{ props.notice }}</p>
+
+      <button type="button" class="btn btn-primary block" :disabled="passkeyBusy" @click="loginWithPasskey">
+        <span v-if="passkeyBusy" class="spinner" />{{ passkeyBusy ? 'Acessando…' : 'Entrar com Passkey' }}
+      </button>
+      <div v-if="step === 'email'" class="or-divider"><span>ou usar e-mail</span></div>
 
       <form v-if="step === 'email'" class="stack" @submit.prevent="sendCode">
         <h2>Entrar</h2>

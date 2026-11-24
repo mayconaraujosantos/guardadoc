@@ -246,6 +246,38 @@ defineExpose({ toggleSearch, reload: () => load({ silent: true }) })
       <span class="ptr-spinner" :class="{ spinning: refreshing, ready: pull >= 60 }"><Icon name="download" :size="18" /></span>
     </div>
 
+    <section class="mobile-dashboard" aria-label="Resumo e ações rápidas">
+      <header class="dashboard-header">
+        <div>
+          <span class="dashboard-kicker">Biblioteca pessoal</span>
+          <h1>Scanner</h1>
+        </div>
+        <button class="icon-btn dashboard-search" aria-label="Buscar" @click="toggleSearch">
+          <Icon name="search" :size="20" />
+        </button>
+      </header>
+      <p class="dashboard-summary">
+        {{ documents.length }} {{ documents.length === 1 ? 'documento' : 'documentos' }} · {{ formatSize(totalSize) }}
+      </p>
+      <div class="quick-actions">
+        <button class="quick-action" data-testid="acao-camera" @click="pick(cameraInput)">
+          <span class="quick-action-icon camera"><Icon name="camera" /></span>
+          <strong>Escanear</strong>
+          <small>Câmera</small>
+        </button>
+        <button class="quick-action" data-testid="acao-galeria" @click="pick(galleryInput)">
+          <span class="quick-action-icon gallery"><Icon name="gallery" /></span>
+          <strong>Importar</strong>
+          <small>Galeria</small>
+        </button>
+        <button class="quick-action" data-testid="acao-arquivo" @click="pick(fileInput)">
+          <span class="quick-action-icon file"><Icon name="file" /></span>
+          <strong>Adicionar</strong>
+          <small>Arquivo</small>
+        </button>
+      </div>
+    </section>
+
     <Transition name="fade">
       <div v-if="searching" class="search">
         <Icon name="search" :size="20" />
@@ -306,13 +338,13 @@ defineExpose({ toggleSearch, reload: () => load({ silent: true }) })
       <p>Fotografe ou envie RG, CNH, comprovantes e outros documentos. Eles ficam em armazenamento privado.</p>
       <div class="empty-actions">
         <button class="btn btn-primary" @click="pick(cameraInput)"><Icon name="camera" :size="20" /> Tirar foto</button>
-        <button class="btn btn-tonal" @click="pick(fileInput)"><Icon name="upload" :size="20" /> Enviar arquivo</button>
+        <button class="btn btn-tonal" @click="pick(fileInput)"><Icon name="upload" :size="20" /> Adicionar arquivo</button>
       </div>
     </div>
 
     <!-- Lista -->
     <template v-else>
-      <p v-if="filtered.length === 0 && query.trim()" class="muted center">Nenhum documento encontrado para "{{ query }}".</p>
+        <p v-if="filtered.length === 0 && query.trim()" class="muted center">Nenhum documento encontrado para "{{ query }}".</p>
       <div v-else-if="filtered.length === 0" class="empty compact">
         <div class="empty-art"><Icon name="folder" :size="32" /></div>
         <h2>{{ filter === 'none' ? 'Todos os documentos têm categoria.' : `Nenhum documento em ${activeCategoryName}.` }}</h2>
@@ -376,7 +408,7 @@ defineExpose({ toggleSearch, reload: () => load({ silent: true }) })
         </button>
         <button class="action" @click="pick(fileInput)">
           <span class="action-icon"><Icon name="file" /></span>
-          <span><strong>Escolher arquivo</strong><small>PDF, JPEG ou PNG, até 10 MB</small></span>
+          <span><strong>Adicionar arquivo</strong><small>PDF, JPEG ou PNG, até 10 MB</small></span>
         </button>
       </div>
     </BottomSheet>

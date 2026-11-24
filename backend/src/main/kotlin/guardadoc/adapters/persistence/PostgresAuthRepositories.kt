@@ -3,6 +3,9 @@ package guardadoc.adapters.persistence
 import guardadoc.auth.NewOtpChallenge
 import guardadoc.auth.OtpChallenge
 import guardadoc.auth.OtpRepository
+import guardadoc.auth.PasskeyChallenge
+import guardadoc.auth.PasskeyCredential
+import guardadoc.auth.PasskeyRepository
 import guardadoc.auth.SessionPrincipal
 import guardadoc.auth.SessionRepository
 import guardadoc.auth.User
@@ -16,6 +19,12 @@ class PostgresUserRepository(private val db: Database) : UserRepository {
         c.queryOne("SELECT id, email FROM usuarios WHERE lower(email) = lower(?)", email) {
             User(it.uuid("id"), it.getString("email"))
         }!!
+    }
+
+    override fun findById(userId: UUID): User? = db.withConnection { c ->
+        c.queryOne("SELECT id, email FROM usuarios WHERE id = ?", userId) {
+            User(it.uuid("id"), it.getString("email"))
+        }
     }
 
     override fun delete(userId: UUID) {
@@ -92,4 +101,117 @@ class PostgresSessionRepository(private val db: Database) : SessionRepository {
             c.update("UPDATE sessoes SET revogada_em = ? WHERE token_hash = ? AND revogada_em IS NULL", now, tokenHash)
         }
     }
+}
+
+class PostgresPasskeyRepository(private val db: Database) : PasskeyRepository {
+        override fun createChallenge(id: UUID, userId: UUID?, purpose: String, requestJson: String, expiresAt: Instant) {
+            db.withConnection { c ->
+                c.update(
+                    """INSERT INTO desafios_passkey (id, usuario_id, finalidade, request_json, expira_em)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    id, userId, purpose, requestJson, expiresAt,
+                )
+            }
+        }
+
+        override fun consumeChallenge(id: UUID, purpose: String, now: Instant): PasskeyChallenge? =
+            db.withConnection { c ->
+                c.queryOne(
+                    """UPDATE desafios_passkey
+                       SET consumido_em = ?
+                       WHERE id = ? AND finalidade = ? AND consumido_em IS NULL AND expira_em > ?
+                       RETURNING id, usuario_id, finalidade, request_json""",
+                    now, id, purpose, now,
+                ) {
+                    PasskeyChallenge(
+                        it.uuid("id"),
+                        it.uuidOrNull("usuario_id"),
+                        it.getString("finalidade"),
+                        it.getString("request_json"),
+                    )
+                }
+            }
+
+        override fun saveCredential(
+            userId: UUID,
+            credentialId: ByteArray,
+            userHandle: ByteArray,
+            publicKeyCose: ByteArray,
+            signatureCount: Long,
+        ) {
+            db.withConnection { c ->
+                c.update(
+                    """INSERT INTO credenciais_passkey
+                       (usuario_id, credential_id, user_handle, public_key_cose, contador_assinatura)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT (credential_id) DO UPDATE SET
+                       public_key_cose = EXCLUDED.public_key_cose,
+                       contador_assinatura = EXCLUDED.contador_assinatura,
+                       atualizado_em = CURRENT_TIMESTAMP""",
+                    userId, credentialId, userHandle, publicKeyCose, signatureCount,
+                )
+            }
+        }
+
+        override fun updateSignatureCount(credentialId: ByteArray, signatureCount: Long) {
+            db.withConnection { c ->
+                c.update(
+                    "UPDATE credenciais_passkey SET contador_assinatura = ?, atualizado_em = CURRENT_TIMESTAMP WHERE credential_id = ?",
+                    signatureCount, credentialId,
+                )
+            }
+        }
+
+        override fun findCredentialsByUser(userId: UUID): List<PasskeyCredential> =
+            db.withConnection { c ->
+                c.query(
+                    """SELECT id, usuario_id, credential_id, user_handle, public_key_cose, contador_assinatura
+                       FROM credenciais_passkey WHERE usuario_id = ?""",
+                    userId,
+                ) { credential(it) }
+            }
+
+        override fun findCredentialsByUserHandle(userHandle: ByteArray): List<PasskeyCredential> =
+            db.withConnection { c ->
+                c.query(
+                    """SELECT id, usuario_id, credential_id, user_handle, public_key_cose, contador_assinatura
+                       FROM credenciais_passkey WHERE user_handle = ?""",
+                    userHandle,
+                ) { credential(it) }
+            }
+
+        override fun findCredential(credentialId: ByteArray, userHandle: ByteArray): PasskeyCredential? =
+            db.withConnection { c ->
+                c.queryOne(
+                    """SELECT id, usuario_id, credential_id, user_handle, public_key_cose, contador_assinatura
+                       FROM credenciais_passkey WHERE credential_id = ? AND user_handle = ?""",
+                    credentialId, userHandle,
+                ) { credential(it) }
+            }
+
+        override fun findCredentialById(credentialId: ByteArray): PasskeyCredential? =
+            db.withConnection { c ->
+                c.queryOne(
+                    """SELECT id, usuario_id, credential_id, user_handle, public_key_cose, contador_assinatura
+                       FROM credenciais_passkey WHERE credential_id = ?""",
+                    credentialId,
+                ) { credential(it) }
+            }
+
+        override fun findUserIdByHandle(userHandle: ByteArray): UUID? =
+            db.withConnection { c ->
+                c.queryOne(
+                    "SELECT usuario_id FROM credenciais_passkey WHERE user_handle = ? LIMIT 1",
+                    userHandle,
+                ) { it.uuid("usuario_id") }
+            }
+
+        private fun credential(rs: java.sql.ResultSet): PasskeyCredential = PasskeyCredential(
+            rs.uuid("id"),
+            rs.uuid("usuario_id"),
+            rs.getBytes("credential_id"),
+            rs.getBytes("user_handle"),
+            rs.getBytes("public_key_cose"),
+            rs.getLong("contador_assinatura"),
+        )
 }

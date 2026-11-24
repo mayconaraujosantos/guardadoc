@@ -26,6 +26,7 @@ dependencies {
     implementation("io.javalin:javalin:7.2.4")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.21.0")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.21.0")
+    implementation("com.yubico:webauthn-server-core:2.7.0")
     implementation("org.postgresql:postgresql:42.7.13")
     implementation("com.zaxxer:HikariCP:7.1.0")
     implementation("org.flywaydb:flyway-core:12.4.0")

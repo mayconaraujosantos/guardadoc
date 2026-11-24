@@ -5,6 +5,9 @@ import { VitePWA } from 'vite-plugin-pwa'
 const backend = process.env.BACKEND_URL ?? 'http://localhost:7070'
 
 export default defineConfig({
+  build: {
+    target: ['safari13', 'chrome87', 'firefox78', 'edge88'],
+  },
   plugins: [
     vue(),
     VitePWA({

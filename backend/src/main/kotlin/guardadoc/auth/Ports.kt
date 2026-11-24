@@ -25,6 +25,7 @@ data class SessionPrincipal(val sessionId: UUID, val userId: UUID, val email: St
 
 interface UserRepository {
     fun findOrCreate(email: String): User
+    fun findById(userId: UUID): User?
 
     /** Remove o usuário e, em cascata, sessões, documentos, links e desafios OTP. */
     fun delete(userId: UUID)
@@ -49,6 +50,34 @@ interface SessionRepository {
     fun create(userId: UUID, tokenHash: ByteArray, expiresAt: Instant): UUID
     fun findActive(tokenHash: ByteArray, now: Instant): SessionPrincipal?
     fun revoke(tokenHash: ByteArray, now: Instant)
+}
+
+data class PasskeyChallenge(
+    val id: UUID,
+    val userId: UUID?,
+    val purpose: String,
+    val requestJson: String,
+)
+
+data class PasskeyCredential(
+    val id: UUID,
+    val userId: UUID,
+    val credentialId: ByteArray,
+    val userHandle: ByteArray,
+    val publicKeyCose: ByteArray,
+    val signatureCount: Long,
+)
+
+interface PasskeyRepository {
+    fun createChallenge(id: UUID, userId: UUID?, purpose: String, requestJson: String, expiresAt: Instant)
+    fun consumeChallenge(id: UUID, purpose: String, now: Instant): PasskeyChallenge?
+    fun saveCredential(userId: UUID, credentialId: ByteArray, userHandle: ByteArray, publicKeyCose: ByteArray, signatureCount: Long)
+    fun updateSignatureCount(credentialId: ByteArray, signatureCount: Long)
+    fun findCredentialsByUser(userId: UUID): List<PasskeyCredential>
+    fun findCredentialsByUserHandle(userHandle: ByteArray): List<PasskeyCredential>
+    fun findCredential(credentialId: ByteArray, userHandle: ByteArray): PasskeyCredential?
+    fun findCredentialById(credentialId: ByteArray): PasskeyCredential?
+    fun findUserIdByHandle(userHandle: ByteArray): UUID?
 }
 
 interface EmailSender {

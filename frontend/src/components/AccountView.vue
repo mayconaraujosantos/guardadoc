@@ -19,6 +19,8 @@ const initial = computed(() => props.user.email.charAt(0).toUpperCase())
 const deleteOpen = ref(false)
 const confirmation = ref('')
 const deleting = ref(false)
+const registeringPasskey = ref(false)
+const passkeyMessage = ref('')
 const deleteError = ref('')
 const confirmed = computed(() => confirmation.value.trim().toLowerCase() === props.user.email.toLowerCase())
 
@@ -27,8 +29,22 @@ async function onInstall() {
 }
 
 async function logout() {
-  const ok = await confirmAction({ title: 'Sair do GuardaDoc?', message: 'Você precisará de um novo código para entrar.', confirmLabel: 'Sair' })
+  const ok = await confirmAction({ title: 'Sair do GuardaDoc?', message: 'Você poderá entrar novamente com sua Passkey.', confirmLabel: 'Sair' })
   if (ok) emit('logout')
+}
+
+async function registerPasskey() {
+  registeringPasskey.value = true
+  passkeyMessage.value = ''
+  try {
+    await api.registerPasskey()
+    haptic(15)
+    passkeyMessage.value = 'Passkey criada neste dispositivo.'
+  } catch (e) {
+    passkeyMessage.value = e.message
+  } finally {
+    registeringPasskey.value = false
+  }
 }
 
 function openDelete() {
@@ -86,6 +102,15 @@ async function deleteAccount() {
           <span class="meta">Arquivos em armazenamento privado. Nada fica salvo no aparelho além do app.</span>
         </span>
       </div>
+    </div>
+
+    <h2 class="group-title">Acesso</h2>
+    <div class="group">
+      <button class="item" :disabled="registeringPasskey" @click="registerPasskey">
+        <span class="item-icon"><Icon name="shield" /></span>
+        <span class="lines"><strong>Criar Passkey</strong><span class="meta">Entre depois usando biometria ou PIN deste dispositivo</span></span>
+      </button>
+      <p v-if="passkeyMessage" class="group-message">{{ passkeyMessage }}</p>
     </div>
 
     <h2 class="group-title">Sessão</h2>

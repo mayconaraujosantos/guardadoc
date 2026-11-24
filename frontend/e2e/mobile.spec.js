@@ -46,23 +46,23 @@ test('menu de adicionar oferece câmera, galeria e arquivo', async ({ page }) =>
   const sheet = page.getByRole('dialog', { name: 'Adicionar documento' })
   await expect(sheet.getByRole('button', { name: /Tirar foto/ })).toBeVisible()
   await expect(sheet.getByRole('button', { name: /Escolher da galeria/ })).toBeVisible()
-  await expect(sheet.getByRole('button', { name: /Escolher arquivo/ })).toBeVisible()
+  await expect(sheet.getByRole('button', { name: /Adicionar arquivo/ })).toBeVisible()
 })
 
 test('botões de envio abrem o seletor de arquivos do sistema', async ({ page }) => {
   await login(page, uniqueEmail('seletor'))
 
-  // Estado vazio: "Enviar arquivo" abre o seletor e o arquivo escolhido sobe.
+  // Estado vazio: "Adicionar arquivo" abre o seletor e o arquivo escolhido sobe.
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    page.getByRole('button', { name: /Enviar arquivo/ }).click(),
+    page.getByRole('button', { name: /Adicionar arquivo/ }).click(),
   ])
   expect(chooser.isMultiple()).toBe(true)
   await chooser.setFiles({ name: 'RG.jpg', mimeType: 'image/jpeg', buffer: sampleJpeg })
   await expect(page.getByRole('button', { name: 'Abrir RG.jpg' })).toBeVisible()
 
   // Cada opção do menu "+" também abre o seletor.
-  for (const option of [/Tirar foto/, /Escolher da galeria/, /Escolher arquivo/]) {
+  for (const option of [/Tirar foto/, /Escolher da galeria/, /Adicionar arquivo/]) {
     await page.getByTestId('adicionar').click()
     const [picker] = await Promise.all([
       page.waitForEvent('filechooser'),

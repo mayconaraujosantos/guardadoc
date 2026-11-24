@@ -66,6 +66,62 @@ function setSession(me) {
   return me
 }
 
+function base64Url(buffer) {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function publicKeyOptions(optionsJson) {
+  const parsed = JSON.parse(optionsJson)
+  const publicKey = parsed.publicKey ?? parsed
+  publicKey.challenge = fromBase64Url(publicKey.challenge)
+  if (publicKey.user?.id) publicKey.user.id = fromBase64Url(publicKey.user.id)
+  if (publicKey.allowCredentials) {
+    publicKey.allowCredentials = publicKey.allowCredentials.map((credential) => ({
+      ...credential,
+      id: fromBase64Url(credential.id),
+    }))
+  }
+  if (publicKey.excludeCredentials) {
+    publicKey.excludeCredentials = publicKey.excludeCredentials.map((credential) => ({
+      ...credential,
+      id: fromBase64Url(credential.id),
+    }))
+  }
+  return publicKey
+}
+
+function fromBase64Url(value) {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=')
+  const binary = atob(base64)
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+  return bytes
+}
+
+function serializeCredential(credential) {
+  const response = credential.response
+  return JSON.stringify({
+    id: credential.id,
+    rawId: base64Url(credential.rawId),
+    type: credential.type,
+    response: response.attestationObject
+      ? {
+          attestationObject: base64Url(response.attestationObject),
+          clientDataJSON: base64Url(response.clientDataJSON),
+          transports: response.getTransports?.() ?? [],
+        }
+      : {
+          authenticatorData: base64Url(response.authenticatorData),
+          clientDataJSON: base64Url(response.clientDataJSON),
+          signature: base64Url(response.signature),
+          userHandle: response.userHandle ? base64Url(response.userHandle) : null,
+        },
+    clientExtensionResults: credential.getClientExtensionResults?.() ?? {},
+  })
+}
+
 export const api = {
   async me() {
     try {
@@ -78,6 +134,28 @@ export const api = {
   requestOtp: (email) => request('POST', '/api/auth/otp', { json: { email } }),
   async verifyOtp(email, code) {
     return setSession(await request('POST', '/api/auth/otp/verify', { json: { email, code } }))
+  },
+  async loginWithPasskey() {
+    if (!window.PublicKeyCredential || !navigator.credentials) throw new ApiError(0, 'Passkey não suportada neste navegador.')
+    const started = await request('POST', '/api/auth/passkey/options')
+    const credential = await navigator.credentials.get({
+      publicKey: publicKeyOptions(started.options),
+    })
+    if (!credential) throw new ApiError(401, 'Nenhuma Passkey selecionada.')
+    return setSession(await request('POST', '/api/auth/passkey/verify', {
+      json: { challengeId: started.challengeId, credential: serializeCredential(credential) },
+    }))
+  },
+  async registerPasskey() {
+    if (!window.PublicKeyCredential || !navigator.credentials) throw new ApiError(0, 'Passkey não suportada neste navegador.')
+    const started = await request('POST', '/api/passkeys/options')
+    const credential = await navigator.credentials.create({
+      publicKey: publicKeyOptions(started.options),
+    })
+    if (!credential) throw new ApiError(400, 'A criação da Passkey foi cancelada.')
+    await request('POST', '/api/passkeys/register', {
+      json: { challengeId: started.challengeId, credential: serializeCredential(credential) },
+    })
   },
   async logout() {
     await request('POST', '/api/auth/logout')

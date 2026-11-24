@@ -7,6 +7,7 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import guardadoc.account.AccountService
 import guardadoc.adapters.email.DevOutboxEmailSender
 import guardadoc.auth.AuthService
+import guardadoc.auth.PasskeyService
 import guardadoc.auth.SessionPrincipal
 import guardadoc.documents.CategoryService
 import guardadoc.documents.DocumentService
@@ -30,6 +31,7 @@ import java.util.UUID
 data class HttpSettings(
     val publicBaseUrl: String,
     val allowedOrigins: Set<String>,
+    val dev: Boolean,
     val cookieSecure: Boolean,
     val csrfSecret: ByteArray,
     val previousCsrfSecrets: List<ByteArray> = emptyList(),
@@ -44,6 +46,7 @@ data class HttpSettings(
 /** Adaptador de entrada HTTP: traduz requisições para os casos de uso. */
 class HttpApi(
     private val auth: AuthService,
+    private val passkeys: PasskeyService,
     private val documents: DocumentService,
     private val categories: CategoryService,
     private val shares: ShareService,
@@ -105,7 +108,12 @@ class HttpApi(
                 // Defesa contra CSRF: origem precisa estar na allowlist, e
                 // requisições autenticadas exigem token vinculado à sessão.
                 val origin = ctx.header("Origin")
-                if (origin != null && origin !in settings.allowedOrigins) {
+                val sameOriginInDev = settings.dev && origin != null && run {
+                    val host = ctx.header("Host")?.substringBefore(',')?.trim()?.lowercase()
+                    val normalizedOrigin = origin.trimEnd('/')
+                    host != null && (normalizedOrigin == "http://$host" || normalizedOrigin == "https://$host")
+                }
+                if (origin != null && origin !in settings.allowedOrigins && !sameOriginInDev) {
                     throw AppException.Forbidden("Origem não permitida")
                 }
                 if (principal != null) {
@@ -140,6 +148,28 @@ class HttpApi(
             setSessionCookie(ctx, issued.token, Duration.between(clock.instant(), issued.expiresAt))
             val principal = auth.authenticate(issued.token) ?: throw AppException.Unauthorized()
             ctx.json(MeResponse(principal.email, csrfToken(principal), principal.expiresAt))
+        }
+        r.post("/api/auth/passkey/options") { ctx ->
+            val started = passkeys.startLogin()
+            ctx.json(PasskeyStartResponse(started.challengeId, started.browserOptions))
+        }
+        r.post("/api/auth/passkey/verify") { ctx ->
+            val body = ctx.parseBody<PasskeyCredentialBody>()
+            val issued = passkeys.finishLogin(body.challengeId, body.credential)
+            setSessionCookie(ctx, issued.token, Duration.between(clock.instant(), issued.expiresAt))
+            val principal = auth.authenticate(issued.token) ?: throw AppException.Unauthorized()
+            ctx.json(MeResponse(principal.email, csrfToken(principal), principal.expiresAt))
+        }
+        r.post("/api/passkeys/options") { ctx ->
+            val principal = ctx.requirePrincipal()
+            val started = passkeys.startRegistration(principal)
+            ctx.json(PasskeyStartResponse(started.challengeId, started.browserOptions))
+        }
+        r.post("/api/passkeys/register") { ctx ->
+            val principal = ctx.requirePrincipal()
+            val body = ctx.parseBody<PasskeyCredentialBody>()
+            passkeys.finishRegistration(principal, body.challengeId, body.credential)
+            ctx.status(HttpStatus.NO_CONTENT)
         }
         r.post("/api/auth/logout") { ctx ->
             auth.logout(ctx.cookie(SESSION_COOKIE), ctx.principalOrNull())
