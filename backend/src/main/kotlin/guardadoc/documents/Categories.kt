@@ -1,6 +1,18 @@
 package guardadoc.documents
 
-import guardadoc.shared.AppException
+import guardadoc.application.categories.AssignCategory
+import guardadoc.application.categories.AssignCategoryCommand
+import guardadoc.application.categories.CategoryNames
+import guardadoc.application.categories.CreateCategory
+import guardadoc.application.categories.CreateCategoryCommand
+import guardadoc.application.categories.DeleteCategory
+import guardadoc.application.categories.DeleteCategoryCommand
+import guardadoc.application.categories.ListCategories
+import guardadoc.application.categories.ListCategoriesCommand
+import guardadoc.application.categories.RenameCategory
+import guardadoc.application.categories.RenameCategoryCommand
+import guardadoc.application.categories.RequireCategoryOwnership
+import guardadoc.application.categories.RequireCategoryOwnershipCommand
 import java.time.Clock
 import java.time.Instant
 import java.util.UUID
@@ -33,67 +45,41 @@ interface CategoryRepository {
     fun delete(id: UUID, ownerId: UUID): Boolean
 }
 
-/** Casos de uso: criar, listar, renomear e excluir categorias; mover documento de categoria. */
+/** API da aplicação de categorias, sobre os casos de uso em `application.categories`. */
 class CategoryService(
-    private val categories: CategoryRepository,
-    private val documents: DocumentRepository,
-    private val clock: Clock,
+    categories: CategoryRepository,
+    documents: DocumentRepository,
+    clock: Clock,
 ) {
-    fun list(ownerId: UUID): List<CategorySummary> = categories.list(ownerId)
+    private val listUseCase = ListCategories(categories)
+    private val createUseCase = CreateCategory(categories, clock)
+    private val renameUseCase = RenameCategory(categories)
+    private val deleteUseCase = DeleteCategory(categories)
+    private val assignUseCase = AssignCategory(categories, documents)
+    private val requireOwnedUseCase = RequireCategoryOwnership(categories)
 
-    fun create(ownerId: UUID, rawName: String): Category {
-        val name = normalizeName(rawName)
-        if (categories.count(ownerId) >= MAX_PER_USER) {
-            throw AppException.Invalid("Limite de $MAX_PER_USER categorias atingido")
-        }
-        val category = Category(UUID.randomUUID(), ownerId, name, clock.instant())
-        try {
-            categories.insert(category)
-        } catch (_: DuplicateCategoryException) {
-            throw duplicate()
-        }
-        return category
-    }
+    fun list(ownerId: UUID): List<CategorySummary> = listUseCase(ListCategoriesCommand(ownerId))
 
-    fun rename(ownerId: UUID, id: UUID, rawName: String): Category {
-        val name = normalizeName(rawName)
-        return try {
-            categories.rename(id, ownerId, name)
-        } catch (_: DuplicateCategoryException) {
-            throw duplicate()
-        } ?: throw AppException.NotFound()
-    }
+    fun create(ownerId: UUID, rawName: String): Category =
+        createUseCase(CreateCategoryCommand(ownerId, rawName))
 
-    fun delete(ownerId: UUID, id: UUID) {
-        if (!categories.delete(id, ownerId)) throw AppException.NotFound()
-    }
+    fun rename(ownerId: UUID, id: UUID, rawName: String): Category =
+        renameUseCase(RenameCategoryCommand(ownerId, id, rawName))
+
+    fun delete(ownerId: UUID, id: UUID) = deleteUseCase(DeleteCategoryCommand(ownerId, id))
 
     /** Move o documento para a categoria (ou tira de qualquer categoria, com null). */
-    fun assign(ownerId: UUID, documentId: UUID, categoryId: UUID?): Document {
-        requireOwned(ownerId, categoryId)
-        return documents.setCategory(documentId, ownerId, categoryId) ?: throw AppException.NotFound()
-    }
+    fun assign(ownerId: UUID, documentId: UUID, categoryId: UUID?): Document =
+        assignUseCase(AssignCategoryCommand(ownerId, documentId, categoryId))
 
     /** Garante que a categoria (se informada) pertence ao usuário. */
-    fun requireOwned(ownerId: UUID, categoryId: UUID?) {
-        if (categoryId != null && categories.find(categoryId, ownerId) == null) {
-            throw AppException.Invalid("Categoria não encontrada")
-        }
-    }
-
-    private fun duplicate() = AppException.Invalid("Já existe uma categoria com esse nome")
+    fun requireOwned(ownerId: UUID, categoryId: UUID?) =
+        requireOwnedUseCase(RequireCategoryOwnershipCommand(ownerId, categoryId))
 
     companion object {
-        const val MAX_PER_USER = 50
-        const val MAX_NAME_LENGTH = 40
+        const val MAX_PER_USER = CategoryNames.MAX_PER_USER
+        const val MAX_NAME_LENGTH = CategoryNames.MAX_NAME_LENGTH
 
-        /** Remove caracteres de controle e espaços repetidos; exige de 1 a 40 caracteres. */
-        fun normalizeName(raw: String): String {
-            val name = raw.filterNot { it.isISOControl() }.trim().replace(Regex("\\s+"), " ")
-            if (name.isEmpty() || name.length > MAX_NAME_LENGTH) {
-                throw AppException.Invalid("O nome da categoria deve ter de 1 a $MAX_NAME_LENGTH caracteres")
-            }
-            return name
-        }
+        fun normalizeName(raw: String): String = CategoryNames.normalize(raw)
     }
 }

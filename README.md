@@ -23,7 +23,8 @@ exportado novamente.
 - PWA responsiva em Vue. O service worker pode armazenar apenas a interface
   estática; não pode armazenar documentos, respostas autenticadas da API ou
   tokens.
-- Monólito modular com portas e adaptadores.
+- Monólito modular com portas e adaptadores e camada explícita de casos de uso
+  (detalhes em `docs/arquitetura.md`).
 
 ### Experiência no celular (PWA)
 
@@ -73,25 +74,25 @@ conformidade legal ou com a LGPD.
 ```text
 backend/
   src/main/kotlin/guardadoc/
-    auth/        núcleo: RequestOtp, VerifyOtp/CreateSession + portas
-    documents/   núcleo: Upload, List, Download, Delete + portas
-    sharing/     núcleo: CreateShareLink, AccessSharedDocument, RevokeShareLink
-    account/     núcleo: exclusão da conta pelo titular
-    maintenance/ retenção de dados, varredura de órfãos, lock entre instâncias
-    shared/      criptografia, erros de aplicação, porta de auditoria
+    auth/ documents/ sharing/ maintenance/ shared/
+                   domínio: entidades, regras puras e portas
+    application/   casos de uso explícitos (um comando por operação) e portas
+                   consumidas por account/maintenance/sharing
     adapters/
-      http/         adaptador de entrada (Javalin): rotas, CSRF, cabeçalhos
+      http/         adaptador de entrada (Javalin): filtros, CSRF, cabeçalhos
+        routes/     um registrador de rotas por área
       persistence/  adaptadores PostgreSQL de todas as portas de repositório
       storage/      armazenamento privado: disco local ou S3
       scan/         antivírus ClamAV
       email/        SMTP e outbox de desenvolvimento
       ratelimit/    limitador em PostgreSQL (multi-instância) ou em memória
     GuardaDocApp.kt  composition root (liga portas a adaptadores)
+    AppConfig.kt     configuração por variáveis de ambiente
   src/main/resources/db/migration/   migrações Flyway
   src/dev/kotlin/    DevMain: PostgreSQL embarcado para desenvolvimento
-  src/test/kotlin/   testes de integração (PostgreSQL embarcado, HTTP real)
+  src/test/kotlin/   integração (PostgreSQL embarcado, HTTP real) + testes de casos de uso
 frontend/            PWA Vue/Vite (e2e/: testes Playwright)
-docs/                artefatos de arquitetura e fluxos de dados
+docs/                artefatos de arquitetura, fluxos e `arquitetura.md`
 docs/politicas/      segredos e chaves; retenção e exclusão
 .github/workflows/   CI: testes do backend, E2E e build da imagem
 ```

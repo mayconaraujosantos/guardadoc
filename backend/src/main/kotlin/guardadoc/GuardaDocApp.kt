@@ -42,7 +42,11 @@ import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-/** Composition root: liga portas aos adaptadores conforme a configuração. */
+/**
+ * Composition root: único lugar que liga portas (domínio/aplicação) aos
+ * adaptadores concretos conforme a configuração. As fachadas de `auth`,
+ * `documents`, `sharing`, etc. delegam aos casos de uso em `application`.
+ */
 class GuardaDocApp(
     val config: AppConfig,
     val database: Database,
