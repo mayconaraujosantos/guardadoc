@@ -92,7 +92,7 @@ backend/
   src/dev/kotlin/    DevMain: PostgreSQL embarcado para desenvolvimento
   src/test/kotlin/   integração (PostgreSQL embarcado, HTTP real) + testes de casos de uso
 frontend/            PWA Vue/Vite (e2e/: testes Playwright)
-docs/                artefatos de arquitetura, fluxos e `arquitetura.md`
+docs/                arquitetura, fluxos, políticas e guia `railway.md`
 docs/politicas/      segredos e chaves; retenção e exclusão
 .github/workflows/   CI: testes do backend, E2E e build da imagem
 ```
@@ -165,6 +165,16 @@ antivírus ClamAV (a primeira subida do ClamAV leva alguns minutos):
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
 ```
+
+### Railway
+
+Para productionizar em um único serviço Railway (API + PWA), use o
+`Dockerfile` e o `railway.json` da raiz, com PostgreSQL do Railway, bucket S3
+privado e SMTP. O guia completo, incluindo variáveis de ambiente e healthcheck,
+está em `docs/railway.md`.
+
+O backend aceita tanto `DATABASE_URL` JDBC quanto a URL `postgresql://...`
+fornecida por PaaS (Railway, por exemplo), extraindo usuario e senha dela.
 
 ### Testes
 

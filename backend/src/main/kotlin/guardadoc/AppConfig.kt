@@ -4,6 +4,9 @@ import guardadoc.adapters.email.SmtpSettings
 import guardadoc.adapters.storage.S3Settings
 import guardadoc.maintenance.RetentionPolicy
 import guardadoc.shared.Crypto
+import java.net.URI
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.time.Duration
 
@@ -45,6 +48,34 @@ data class AppConfig(
     val previousCsrfKeys: List<ByteArray> get() = listOfNotNull(appSecretPrevious?.let { derive(it, "csrf") })
 
     companion object {
+        /**
+         * Railway (e outros PaaS) fornecem `postgresql://usuario:senha@host/db`.
+         * O driver JDBC precisa de `jdbc:postgresql://host/db`, com usuário e
+         * senha separados. URLs JDBC e variáveis explícitas continuam valendo.
+         */
+        private data class DatabaseEnv(val url: String, val user: String?, val password: String?)
+
+        private fun databaseEnv(raw: String?): DatabaseEnv {
+            if (raw.isNullOrBlank()) {
+                return DatabaseEnv("jdbc:postgresql://localhost:5432/guardadoc", null, null)
+            }
+            if (raw.startsWith("jdbc:")) return DatabaseEnv(raw, null, null)
+            require(raw.startsWith("postgres://") || raw.startsWith("postgresql://")) {
+                "DATABASE_URL deve ser jdbc:postgresql:// ou postgresql://"
+            }
+            val uri = URI.create(raw)
+            val scheme = if (uri.scheme == "postgres") "postgresql" else uri.scheme
+            val jdbc = URI(scheme, null, uri.host, uri.port, uri.path, uri.query, null)
+            val userInfo = uri.userInfo
+            val separator = userInfo?.indexOf(':')?.takeIf { it >= 0 }
+            fun decode(value: String) = URLDecoder.decode(value, StandardCharsets.UTF_8)
+            return DatabaseEnv(
+                url = "jdbc:$jdbc",
+                user = userInfo?.let { separator?.let { i -> decode(it.substring(0, i)) } ?: decode(it) },
+                password = separator?.let { decode(userInfo.substring(it + 1)) },
+            )
+        }
+
         fun fromEnv(env: Map<String, String> = System.getenv()): AppConfig {
             fun get(name: String) = env[name]?.takeIf { it.isNotBlank() }
             val dev = get("APP_ENV") == "dev"
@@ -55,13 +86,14 @@ data class AppConfig(
             val previous = get("APP_SECRET_PREVIOUS")
             require(previous == null || previous.length >= 32) { "APP_SECRET_PREVIOUS deve ter pelo menos 32 caracteres" }
             val storage = AppConfig.StorageBackend.valueOf((get("STORAGE_BACKEND") ?: "local").uppercase())
+            val database = databaseEnv(get("DATABASE_URL"))
             fun days(name: String, default: Long) = Duration.ofDays(get(name)?.toLong() ?: default)
             return AppConfig(
                 dev = dev,
                 port = port,
-                databaseUrl = get("DATABASE_URL") ?: "jdbc:postgresql://localhost:5432/guardadoc",
-                databaseUser = get("DATABASE_USER") ?: "guardadoc",
-                databasePassword = get("DATABASE_PASSWORD") ?: "guardadoc",
+                databaseUrl = database.url,
+                databaseUser = get("DATABASE_USER") ?: database.user ?: "guardadoc",
+                databasePassword = get("DATABASE_PASSWORD") ?: database.password ?: "guardadoc",
                 appSecret = secret,
                 appSecretPrevious = previous,
                 publicBaseUrl = publicBaseUrl,
